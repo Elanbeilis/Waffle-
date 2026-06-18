@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, init_db
 from models import FilingType, LeadSource, OutreachChannel, PipelineStage, SkipTraceStatus
-from routers import drafting, import_csv, leads, outreach, sending, skip_trace
+from routers import drafting, import_csv, leads, outreach, scraper, sending, skip_trace
 
 
 @asynccontextmanager
@@ -42,6 +42,7 @@ app.include_router(sending.router, prefix="/api")
 app.include_router(drafting.router, prefix="/api")
 app.include_router(import_csv.router, prefix="/api")
 app.include_router(skip_trace.router, prefix="/api")
+app.include_router(scraper.router, prefix="/api")
 
 
 @app.get("/", response_class=HTMLResponse)

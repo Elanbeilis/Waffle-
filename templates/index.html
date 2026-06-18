@@ -39,6 +39,7 @@
     <button class="tab-btn active" onclick="showTab('pipeline')">Pipeline</button>
     <button class="tab-btn" onclick="showTab('skip-trace')" id="skip-trace-tab-btn">Skip Trace</button>
     <button class="tab-btn" onclick="showTab('import')">Import CSV</button>
+    <button class="tab-btn" onclick="showTab('public-records')">Public Records</button>
     <button class="tab-btn" onclick="showTab('pending')" id="pending-tab-btn">Pending Approvals</button>
     <button class="tab-btn" onclick="showTab('new-lead')">+ Add Lead</button>
   </div>
@@ -259,6 +260,70 @@
   </div>
 
   <!-- ================================================================== -->
+  <!-- PUBLIC RECORDS TAB                                                  -->
+  <!-- ================================================================== -->
+  <div id="tab-public-records" class="tab-panel">
+
+    <div class="card" style="max-width:700px;">
+      <h3 style="margin-top:0;">Fetch Public Filing Records</h3>
+      <p style="font-size:13px;color:#555;margin-top:0;">
+        Pull new lis pendens / notice of default filings directly from county portals.
+        New leads are created automatically; existing addresses are skipped (deduped).
+      </p>
+
+      <div class="alert alert-warning" style="font-size:13px;">
+        <strong>⚠️ TCPA Notice:</strong> Cold SMS to property owners whose contact info was
+        obtained through public filing records may be subject to the
+        <strong>Telephone Consumer Protection Act (TCPA)</strong> and state equivalents.
+        Consult a licensed attorney before conducting SMS campaigns to cold lists.
+        This tool does not auto-send — all messages require your explicit approval.
+      </div>
+
+      <div id="scrape-counties-status" style="margin-bottom:14px;font-size:12px;color:#888;">
+        Loading county status…
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+        <div class="form-row">
+          <label>County</label>
+          <select id="scrape-county">
+            <option value="nassau">Nassau County, NY</option>
+            <option value="suffolk">Suffolk County, NY</option>
+            <option value="kings">Kings County (Brooklyn), NY</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Filings since</label>
+          <input type="date" id="scrape-since">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+        <button class="btn btn-primary" id="scrape-btn" onclick="runScrape(false)">Fetch &amp; Import</button>
+        <button class="btn btn-sm" onclick="runScrape(true)">Dry Run (preview)</button>
+      </div>
+    </div>
+
+    <div id="scrape-not-implemented" style="display:none;" class="alert alert-warning" style="max-width:700px;">
+      ⚠️ <strong>Scraper not yet implemented for this county.</strong><br>
+      Open <code>stubs/public_records_scraper.py</code> and fill in the county's
+      <code>fetch_new_filings()</code> method, then retry.
+    </div>
+
+    <div id="scrape-results" style="display:none;max-width:700px;">
+      <div class="card">
+        <h3 id="scrape-results-title" style="margin-top:0;"></h3>
+        <div id="scrape-results-summary" style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <div id="scrape-results-details"></div>
+        <div style="margin-top:12px;display:flex;gap:8px;">
+          <button class="btn btn-primary btn-sm" onclick="showTab('pipeline');loadLeads();loadStats()">View Pipeline</button>
+          <button class="btn btn-sm" onclick="document.getElementById('scrape-results').style.display='none'">Dismiss</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ================================================================== -->
   <!-- PENDING APPROVALS TAB                                               -->
   <!-- ================================================================== -->
   <div id="tab-pending" class="tab-panel">
@@ -355,10 +420,11 @@ function showTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const map = { pipeline: 0, 'skip-trace': 1, import: 2, pending: 3, 'new-lead': 4 };
+  const map = { pipeline: 0, 'skip-trace': 1, import: 2, 'public-records': 3, pending: 4, 'new-lead': 5 };
   if (map[name] !== undefined) document.querySelectorAll('.tab-btn')[map[name]].classList.add('active');
   if (name === 'pending') loadPending();
   if (name === 'skip-trace') loadSkipTraceQueue();
+  if (name === 'public-records') loadCountyStatus();
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +924,120 @@ async function runAllQueued() {
   loadSkipTraceQueue();
   loadStats();
 }
+
+// ---------------------------------------------------------------------------
+// Public Records scraper
+// ---------------------------------------------------------------------------
+async function loadCountyStatus() {
+  const el = document.getElementById('scrape-counties-status');
+  try {
+    const res = await fetch('/api/scrape/counties');
+    const data = await res.json();
+    const parts = data.counties.map(c => {
+      const dot = c.implemented
+        ? '<span style="color:#155724;">●</span>'
+        : '<span style="color:#b45309;">○</span>';
+      return `${dot} <strong>${c.label}</strong> <a href="${c.url}" target="_blank" style="font-size:11px;color:#1e5fa0;">[portal]</a>`;
+    });
+    el.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+  } catch(e) {
+    el.textContent = '';
+  }
+}
+
+async function runScrape(dryRun) {
+  const btn     = document.getElementById('scrape-btn');
+  const banner  = document.getElementById('scrape-not-implemented');
+  const results = document.getElementById('scrape-results');
+  const county  = document.getElementById('scrape-county').value;
+  const since   = document.getElementById('scrape-since').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  banner.style.display = 'none';
+  results.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/scrape/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ county, since_date: since || null, dry_run: dryRun }),
+    });
+    const data = await res.json();
+
+    if (res.status === 501) {
+      banner.style.display = 'block';
+      return;
+    }
+    if (!res.ok) {
+      alert('Scrape failed: ' + JSON.stringify(data.detail || data));
+      return;
+    }
+
+    renderScrapeResults(data, dryRun);
+    if (!dryRun && data.created > 0) { loadStats(); }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch & Import';
+  }
+}
+
+function renderScrapeResults(data, dryRun) {
+  const results = document.getElementById('scrape-results');
+  const title   = document.getElementById('scrape-results-title');
+  const summary = document.getElementById('scrape-results-summary');
+  const details = document.getElementById('scrape-results-details');
+
+  title.textContent = (dryRun ? '[Dry Run] ' : '') + data.county.charAt(0).toUpperCase() + data.county.slice(1)
+    + ' County — filings since ' + data.since_date;
+
+  summary.innerHTML = [
+    { val: data.created,    lbl: dryRun ? 'Would create' : 'Created',  color: '#155724' },
+    { val: data.duplicates, lbl: 'Duplicates skipped',                  color: '#856404' },
+    { val: data.errors,     lbl: 'Errors',                              color: data.errors > 0 ? '#721c24' : '#555' },
+  ].map(s => `<div style="text-align:center;">
+    <div style="font-size:28px;font-weight:700;color:${s.color};">${s.val}</div>
+    <div style="font-size:12px;color:#555;">${s.lbl}</div>
+  </div>`).join('');
+
+  let det = '';
+  if ((data.duplicate_details || []).length > 0) {
+    det += `<details style="margin-bottom:10px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;">
+      ⚠️ ${data.duplicates} duplicate(s) skipped</summary>
+      <table style="margin-top:8px;font-size:13px;">
+        <thead><tr><th>Address</th><th>Owner(s)</th><th>Existing</th></tr></thead>
+        <tbody>${data.duplicate_details.map(d =>
+          `<tr><td>${d.address}</td><td>${(d.owner_names||[]).join(', ')}</td>
+           <td><a href="/lead/${d.existing_lead_id}">Lead #${d.existing_lead_id}</a></td></tr>`
+        ).join('')}</tbody>
+      </table></details>`;
+  }
+  if ((data.error_details || []).length > 0) {
+    det += `<details><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#721c24;">
+      ❌ ${data.errors} error(s)</summary>
+      <table style="margin-top:8px;font-size:13px;">
+        <thead><tr><th>#</th><th>Address</th><th>Error</th></tr></thead>
+        <tbody>${data.error_details.map(d =>
+          `<tr><td>${d.index}</td><td>${d.address}</td><td>${d.error}</td></tr>`
+        ).join('')}</tbody>
+      </table></details>`;
+  }
+  if (!det && data.created === 0 && data.duplicates === 0) {
+    det = '<p style="color:#999;font-size:13px;">No filings found in the date range.</p>';
+  }
+
+  details.innerHTML = det;
+  results.style.display = 'block';
+}
+
+// Pre-fill scrape since-date to 30 days ago
+(function() {
+  const d = new Date(); d.setDate(d.getDate() - 30);
+  const el = document.getElementById('scrape-since');
+  if (el) el.value = d.toISOString().split('T')[0];
+})();
 
 // ---------------------------------------------------------------------------
 // Rescore all leads
