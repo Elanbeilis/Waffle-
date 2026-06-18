@@ -435,17 +435,59 @@
 
       <!-- AI drafting -->
       <div class="card">
-        <div class="section-title">AI Drafting <small style="font-weight:400;color:#888;">Step 6</small></div>
+        <div class="section-title">AI Drafting
+          <span style="font-size:11px;font-weight:400;color:#888;margin-left:6px;">powered by Claude</span>
+        </div>
+
         {% if lead.do_not_contact %}
         <div class="alert alert-danger">
           ⛔ AI drafting blocked — this lead is marked Do Not Contact.
-          {% if lead.do_not_contact_reason %}Reason: {{ lead.do_not_contact_reason }}{% endif %}
+          {% if lead.do_not_contact_reason %}<br>Reason: {{ lead.do_not_contact_reason }}{% endif %}
         </div>
         {% else %}
-        <p style="color:#999;font-size:13px;">
-          Claude API drafting (first-contact SMS + email, reply analysis) will be wired in Step 6.
-          All AI-drafted messages land in the Pending Approvals queue before anything is sent.
+        <p style="font-size:12px;color:#666;margin-top:0;">
+          Claude drafts the message and places it in the <strong>Pending Approvals</strong> queue.
+          Nothing is sent until you approve it.
         </p>
+
+        <div id="draft-msg" class="alert" style="display:none;margin-bottom:10px;"></div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;">
+          <div class="form-row">
+            <label>Channel</label>
+            <select id="draft-channel">
+              <option value="sms">SMS</option>
+              <option value="email">Email</option>
+              <option value="call">Call (script)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Tone</label>
+            <select id="draft-tone">
+              <option value="empathetic">Empathetic</option>
+              <option value="professional">Professional</option>
+              <option value="direct">Direct</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Extra context <small>(optional — e.g. "they're behind on taxes")</small></label>
+          <textarea id="draft-context" rows="2" placeholder="Any additional context for Claude…"></textarea>
+        </div>
+
+        <button class="btn btn-primary btn-sm" id="draft-btn" onclick="draftMessage()">
+          ✦ Draft with Claude
+        </button>
+
+        <div id="draft-result" style="display:none;margin-top:14px;border-top:1px solid #eee;padding-top:12px;">
+          <div style="font-size:12px;font-weight:700;color:#555;margin-bottom:6px;">DRAFTED MESSAGE</div>
+          <pre id="draft-output" style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;background:#f8f9fa;border:1px solid #eee;border-radius:4px;padding:10px;margin:0;"></pre>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <a id="draft-pending-link" href="/?tab=pending" style="font-size:12px;color:#1e5fa0;">View in Pending Approvals →</a>
+            <span style="font-size:12px;color:#888;">· Edit and approve before anything is sent.</span>
+          </div>
+        </div>
         {% endif %}
       </div>
 
@@ -712,6 +754,67 @@ async function recalcScore() {
     const fb = document.getElementById('rescore-fb');
     fb.style.display = 'inline';
     setTimeout(() => { fb.style.display = 'none'; }, 2000);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI drafting
+// ---------------------------------------------------------------------------
+async function draftMessage() {
+  const btn     = document.getElementById('draft-btn');
+  const msgEl   = document.getElementById('draft-msg');
+  const result  = document.getElementById('draft-result');
+  const output  = document.getElementById('draft-output');
+
+  btn.disabled  = true;
+  btn.textContent = '✦ Drafting…';
+  msgEl.style.display = 'none';
+  result.style.display = 'none';
+
+  const payload = {
+    channel:       document.getElementById('draft-channel').value,
+    tone:          document.getElementById('draft-tone').value,
+    extra_context: document.getElementById('draft-context').value.trim() || null,
+  };
+
+  try {
+    const res = await fetch(`/api/leads/${LEAD_ID}/draft-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (res.status === 503) {
+      msgEl.className = 'alert alert-warning';
+      msgEl.style.display = 'block';
+      const detail = data.detail || {};
+      msgEl.innerHTML = `⚠️ <strong>${detail.message || 'Service unavailable.'}</strong><br>
+        <span style="font-size:12px;">${detail.instructions || ''}</span>`;
+      return;
+    }
+    if (res.status === 403) {
+      msgEl.className = 'alert alert-danger';
+      msgEl.style.display = 'block';
+      msgEl.textContent = data.detail || 'Drafting blocked.';
+      return;
+    }
+    if (!res.ok) {
+      throw new Error(JSON.stringify(data.detail || data));
+    }
+
+    output.textContent = data.content;
+    result.style.display = 'block';
+    msgEl.className = 'alert alert-success';
+    msgEl.style.display = 'block';
+    msgEl.innerHTML = `✅ Draft saved to <strong>Pending Approvals</strong> (log #${data.id}). Review and approve before sending.`;
+  } catch(e) {
+    msgEl.className = 'alert alert-danger';
+    msgEl.style.display = 'block';
+    msgEl.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ Draft with Claude';
   }
 }
 
