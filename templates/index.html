@@ -93,11 +93,79 @@
 
   <!-- Import CSV -->
   <div id="tab-import" class="tab-panel">
-    <div class="card">
-      <h3>Import CSV (Step 2 — coming next)</h3>
-      <p style="color:#666;">The CSV importer with column-mapping will be built in Step 2.
-         For now, use the manual entry form or the JSON API at <code>POST /api/leads</code>.</p>
+
+    <!-- Step 1: Upload -->
+    <div id="import-step1" class="card" style="max-width:700px;">
+      <h3>Import CSV — Step 1: Upload</h3>
+      <div id="import-upload-msg" style="display:none;" class="alert"></div>
+      <div class="form-row">
+        <label>Lead source</label>
+        <select id="import-source">
+          <option value="propstream">PropStream</option>
+          <option value="propertyshark">PropertyShark</option>
+          <option value="public_record">Public Record</option>
+          <option value="manual">Manual / Other</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>CSV file</label>
+        <input type="file" id="import-file" accept=".csv,text/csv">
+      </div>
+      <p style="font-size:12px;color:#666;">
+        UTF-8 or Windows (BOM) encoding both work.
+        If you've imported this source before, the saved column mapping will be pre-loaded.
+      </p>
+      <button class="btn btn-primary" onclick="uploadCSV()">Upload &amp; Preview</button>
     </div>
+
+    <!-- Step 2: Column mapping -->
+    <div id="import-step2" style="display:none;">
+      <div class="card">
+        <h3>Step 2: Map Columns</h3>
+        <p id="import-file-info" style="font-size:13px;color:#555;"></p>
+        <div id="import-mapping-saved-notice" style="display:none;" class="alert alert-info" style="margin-bottom:8px;"></div>
+
+        <table style="margin-bottom:16px;">
+          <thead>
+            <tr>
+              <th style="width:200px;">Lead field</th>
+              <th style="width:260px;">CSV column</th>
+              <th>Sample values</th>
+            </tr>
+          </thead>
+          <tbody id="mapping-tbody"></tbody>
+        </table>
+
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="runImport()">Run Import</button>
+          <button class="btn" onclick="resetImport()">Start Over</button>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="import-save-mapping" checked>
+            Save this mapping for future <span id="import-source-label">imports</span>
+          </label>
+        </div>
+
+        <!-- Sample preview -->
+        <details style="margin-top:16px;">
+          <summary style="cursor:pointer;font-size:13px;color:#555;">Show sample rows (first 5)</summary>
+          <div id="import-sample-table" style="overflow-x:auto;margin-top:8px;"></div>
+        </details>
+      </div>
+    </div>
+
+    <!-- Step 3: Results -->
+    <div id="import-step3" style="display:none;">
+      <div class="card">
+        <h3>Import Results</h3>
+        <div id="import-results-summary"></div>
+        <div id="import-results-details"></div>
+        <div style="margin-top:16px;display:flex;gap:10px;">
+          <button class="btn btn-primary" onclick="resetImport(); showTab('pipeline'); loadLeads()">View Pipeline</button>
+          <button class="btn" onclick="resetImport()">Import Another File</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Pending approvals -->
@@ -548,6 +616,237 @@ async function discardItem(id) {
 document.getElementById('lead-modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
+
+// ---------------------------------------------------------------------------
+// CSV Import Wizard
+// ---------------------------------------------------------------------------
+
+let importSession = null;  // {session_id, headers, sample_rows, field_descriptions}
+
+async function uploadCSV() {
+  const file = document.getElementById('import-file').files[0];
+  const source = document.getElementById('import-source').value;
+  const msgEl = document.getElementById('import-upload-msg');
+
+  if (!file) {
+    msgEl.className = 'alert alert-warning';
+    msgEl.style.display = 'block';
+    msgEl.textContent = 'Please select a CSV file first.';
+    return;
+  }
+
+  msgEl.style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('source', source);
+
+  try {
+    const res = await fetch('/api/import/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+
+    importSession = data;
+    importSession.source = source;
+    renderMappingStep(data);
+  } catch(e) {
+    msgEl.className = 'alert alert-danger';
+    msgEl.style.display = 'block';
+    msgEl.textContent = 'Upload failed: ' + e.message;
+  }
+}
+
+function renderMappingStep(data) {
+  document.getElementById('import-step1').style.display = 'none';
+  document.getElementById('import-step2').style.display = 'block';
+  document.getElementById('import-step3').style.display = 'none';
+
+  document.getElementById('import-file-info').textContent =
+    `${data.filename} — ${data.row_count.toLocaleString()} rows, ${data.headers.length} columns`;
+  document.getElementById('import-source-label').textContent =
+    document.getElementById('import-source').value + ' imports';
+
+  const savedNotice = document.getElementById('import-mapping-saved-notice');
+  if (data.saved_mapping) {
+    savedNotice.style.display = 'block';
+    savedNotice.textContent = '✓ Saved mapping loaded for this source. Adjust as needed.';
+  } else {
+    savedNotice.style.display = 'none';
+  }
+
+  // Build mapping table
+  const tbody = document.getElementById('mapping-tbody');
+  const mapping = data.suggested_mapping || {};
+  const fields = data.field_descriptions || {};
+  const headers = data.headers;
+  const samples = data.sample_rows || [];
+
+  tbody.innerHTML = Object.entries(fields).map(([field, desc]) => {
+    const required = field === 'address' ? ' <span style="color:#dc3545;">*</span>' : '';
+    const selected = mapping[field] || '';
+
+    // Sample values for the selected column (will refresh on change)
+    const sampleVals = selected
+      ? samples.map(r => r[selected] || '').filter(Boolean).slice(0, 3).join(' · ')
+      : '';
+
+    const opts = [`<option value="">— skip —</option>`]
+      .concat(headers.map(h =>
+        `<option value="${h.replace(/"/g,'&quot;')}" ${h === selected ? 'selected' : ''}>${h}</option>`
+      )).join('');
+
+    return `<tr>
+      <td style="font-weight:600;font-size:13px;">${desc.split(' — ')[0]}${required}<br>
+        <span style="font-weight:400;font-size:11px;color:#888;">${field}</span></td>
+      <td>
+        <select style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;"
+          id="map-${field}" data-field="${field}" onchange="updateSample('${field}')">
+          ${opts}
+        </select>
+      </td>
+      <td id="sample-${field}" style="font-size:12px;color:#666;max-width:300px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">
+        ${sampleVals}
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Render sample table in the details block
+  renderSampleTable(data.headers, data.sample_rows);
+}
+
+function updateSample(field) {
+  const sel = document.getElementById('map-' + field);
+  const col = sel.value;
+  const samples = importSession ? importSession.sample_rows : [];
+  const vals = col ? samples.map(r => r[col] || '').filter(Boolean).slice(0, 3).join(' · ') : '';
+  document.getElementById('sample-' + field).textContent = vals;
+}
+
+function renderSampleTable(headers, rows) {
+  const container = document.getElementById('import-sample-table');
+  if (!rows || rows.length === 0) { container.innerHTML = ''; return; }
+  const cols = headers.slice(0, 12); // cap columns for readability
+  container.innerHTML = `<table style="font-size:12px;min-width:600px;">
+    <thead><tr>${cols.map(h => `<th style="white-space:nowrap;">${h}</th>`).join('')}${headers.length > 12 ? '<th>…</th>' : ''}</tr></thead>
+    <tbody>${rows.map(r =>
+      `<tr>${cols.map(c => `<td style="max-width:180px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${r[c] || ''}</td>`).join('')}${headers.length > 12 ? '<td>…</td>' : ''}</tr>`
+    ).join('')}</tbody>
+  </table>`;
+}
+
+function collectMappings() {
+  const mappings = {};
+  document.querySelectorAll('#mapping-tbody select').forEach(sel => {
+    if (sel.value) mappings[sel.dataset.field] = sel.value;
+  });
+  return mappings;
+}
+
+async function runImport() {
+  if (!importSession) return;
+  if (!collectMappings().address) {
+    alert('The "address" field is required — please map it to a CSV column.');
+    return;
+  }
+
+  const payload = {
+    session_id: importSession.session_id,
+    source: importSession.source,
+    mappings: collectMappings(),
+    save_mapping: document.getElementById('import-save-mapping').checked,
+  };
+
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+
+  try {
+    const res = await fetch('/api/import/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+    renderImportResults(data);
+  } catch(e) {
+    alert('Import failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Import';
+  }
+}
+
+function renderImportResults(data) {
+  document.getElementById('import-step2').style.display = 'none';
+  document.getElementById('import-step3').style.display = 'block';
+
+  const summaryEl = document.getElementById('import-results-summary');
+  const okColor = data.imported > 0 ? '#155724' : '#856404';
+  summaryEl.innerHTML = `
+    <div style="display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap;">
+      <div style="text-align:center;">
+        <div style="font-size:32px;font-weight:700;color:${okColor};">${data.imported}</div>
+        <div style="font-size:12px;color:#555;">Imported</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:32px;font-weight:700;color:#856404;">${data.skipped_duplicates}</div>
+        <div style="font-size:12px;color:#555;">Duplicates skipped</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:32px;font-weight:700;color:${data.errors > 0 ? '#721c24' : '#555'};">${data.errors}</div>
+        <div style="font-size:12px;color:#555;">Errors</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:32px;font-weight:700;color:#555;">${data.total_rows}</div>
+        <div style="font-size:12px;color:#555;">Total rows</div>
+      </div>
+    </div>`;
+
+  let details = '';
+
+  if (data.duplicate_details && data.duplicate_details.length > 0) {
+    const rows = data.duplicate_details.map(d =>
+      `<tr><td>${d.row}</td><td>${d.address}</td><td>${(d.owner_names||[]).join(', ')}</td>
+       <td><a href="#" onclick="openLead(${d.existing_lead_id})">Lead #${d.existing_lead_id}</a></td></tr>`
+    ).join('');
+    details += `<details style="margin-bottom:12px;">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px;">
+        ⚠️ ${data.skipped_duplicates} duplicate row(s) — click to review
+      </summary>
+      <table style="margin-top:8px;font-size:13px;">
+        <thead><tr><th>CSV row</th><th>Address</th><th>Owner(s)</th><th>Existing lead</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>`;
+  }
+
+  if (data.error_details && data.error_details.length > 0) {
+    const rows = data.error_details.map(d =>
+      `<tr><td>${d.row}</td><td>${d.error}</td></tr>`
+    ).join('');
+    details += `<details>
+      <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#721c24;">
+        ❌ ${data.errors} error(s) — click to review
+      </summary>
+      <table style="margin-top:8px;font-size:13px;">
+        <thead><tr><th>CSV row</th><th>Error</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>`;
+  }
+
+  document.getElementById('import-results-details').innerHTML = details;
+}
+
+function resetImport() {
+  importSession = null;
+  document.getElementById('import-step1').style.display = 'block';
+  document.getElementById('import-step2').style.display = 'none';
+  document.getElementById('import-step3').style.display = 'none';
+  document.getElementById('import-upload-msg').style.display = 'none';
+  document.getElementById('import-file').value = '';
+}
 
 // Initial load
 loadLeads();

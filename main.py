@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 
 from database import init_db
 from routers import leads, outreach
+from routers import import_csv
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ templates = Jinja2Templates(directory="templates")
 
 app.include_router(leads.router, prefix="/api")
 app.include_router(outreach.router, prefix="/api")
+app.include_router(import_csv.router, prefix="/api")
 
 
 @app.get("/", response_class=HTMLResponse)
