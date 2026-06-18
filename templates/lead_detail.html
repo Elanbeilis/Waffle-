@@ -177,6 +177,31 @@
         </div>
       </div>
 
+      <!-- Score breakdown -->
+      <div class="card">
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          Score Breakdown
+          <button class="btn btn-sm" onclick="toggleBreakdown()">Toggle</button>
+        </div>
+        <div id="score-breakdown" style="display:none;">
+          <table id="breakdown-table" style="width:100%;font-size:13px;border-collapse:collapse;">
+            <thead>
+              <tr style="border-bottom:1px solid #eee;">
+                <th style="text-align:left;padding:4px 8px 6px 0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#888;">Component</th>
+                <th style="text-align:right;padding:4px 0 6px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#888;white-space:nowrap;">Points / Max</th>
+              </tr>
+            </thead>
+            <tbody id="breakdown-tbody">
+              <tr><td colspan="2" style="color:#999;padding:8px 0;">Loading…</td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+            <button class="btn btn-sm" onclick="recalcScore()">Recalculate Score</button>
+            <span id="rescore-fb" class="save-feedback">Recalculated ✓</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Edit all fields -->
       <div class="card">
         <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
@@ -627,6 +652,67 @@ async function runProviderSkipTrace() {
   }
   btn.disabled = false;
   btn.textContent = 'Run Provider Now';
+}
+
+// ---------------------------------------------------------------------------
+// Score breakdown panel
+// ---------------------------------------------------------------------------
+const COMPONENT_LABELS = {
+  base: 'Base',
+  filing_recency: 'Filing recency',
+  absentee_owner: 'Absentee owner',
+  equity: 'Equity',
+  idle_decay: 'Idle decay',
+};
+
+let breakdownLoaded = false;
+
+async function toggleBreakdown() {
+  const panel = document.getElementById('score-breakdown');
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  if (!open && !breakdownLoaded) await loadBreakdown();
+}
+
+async function loadBreakdown() {
+  const tbody = document.getElementById('breakdown-tbody');
+  try {
+    const res = await fetch(`/api/leads/${LEAD_ID}/score-breakdown`);
+    const data = await res.json();
+    const components = data.components || {};
+    tbody.innerHTML = Object.entries(components).map(([key, c]) => {
+      const label = COMPONENT_LABELS[key] || key;
+      const pts = c.points >= 0 ? `+${c.points}` : `${c.points}`;
+      const color = c.points > 0 ? '#155724' : c.points < 0 ? '#721c24' : '#555';
+      return `<tr style="border-bottom:1px solid #f5f5f5;">
+        <td style="padding:5px 8px 5px 0;">
+          <div style="font-weight:600;">${label}</div>
+          <div style="font-size:11px;color:#888;margin-top:1px;">${c.reason}</div>
+        </td>
+        <td style="text-align:right;padding:5px 0 5px 8px;white-space:nowrap;">
+          <strong style="color:${color};">${pts}</strong>
+          <span style="color:#bbb;font-size:11px;"> / ${c.max}</span>
+        </td>
+      </tr>`;
+    }).join('') + `<tr style="border-top:2px solid #eee;">
+      <td style="padding:6px 8px 4px 0;font-weight:700;">Total</td>
+      <td style="text-align:right;padding:6px 0 4px 8px;font-weight:700;font-size:15px;">${data.total}</td>
+    </tr>`;
+    breakdownLoaded = true;
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="2" style="color:#721c24;">Failed to load breakdown.</td></tr>`;
+  }
+}
+
+async function recalcScore() {
+  const res = await fetch(`/api/leads/${LEAD_ID}/recalculate-score`, { method: 'POST' });
+  if (res.ok) {
+    breakdownLoaded = false;
+    await loadBreakdown();
+    const fb = document.getElementById('rescore-fb');
+    fb.style.display = 'inline';
+    setTimeout(() => { fb.style.display = 'none'; }, 2000);
+  }
 }
 
 // Pre-fill datetime-local with now

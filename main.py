@@ -14,6 +14,20 @@ from routers import import_csv, leads, outreach, skip_trace
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Refresh scores on startup so idle-decay penalties reflect the current date
+    from database import SessionLocal
+    from models import Lead as _Lead
+    from scoring import calculate_score as _calc
+    _db = SessionLocal()
+    try:
+        _leads = _db.query(_Lead).all()
+        for _lead in _leads:
+            _new = _calc(_lead)
+            if abs((_lead.score or 0.0) - _new) >= 0.05:
+                _lead.score = _new
+        _db.commit()
+    finally:
+        _db.close()
     yield
 
 

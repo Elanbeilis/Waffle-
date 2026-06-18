@@ -104,6 +104,11 @@
         <label>&nbsp;</label>
         <button class="btn btn-sm" onclick="loadLeads()">Refresh</button>
       </div>
+      <div>
+        <label>&nbsp;</label>
+        <button class="btn btn-sm" id="rescore-btn" onclick="rescoreAll()" title="Recalculate scores for every lead (runs idle-decay fresh)">Rescore All</button>
+        <span id="rescore-msg" style="font-size:12px;color:#555;margin-left:6px;display:none;"></span>
+      </div>
       <div style="margin-left:auto;">
         <label>&nbsp;</label>
         <span id="leads-count" style="font-size:13px;color:#666;"></span>
@@ -807,6 +812,31 @@ async function runAllQueued() {
   msgEl.textContent = `Done — ${data.succeeded} succeeded, ${data.failed} failed, ${data.skipped_dnc} DNC skipped.`;
   loadSkipTraceQueue();
   loadStats();
+}
+
+// ---------------------------------------------------------------------------
+// Rescore all leads
+// ---------------------------------------------------------------------------
+async function rescoreAll() {
+  const btn = document.getElementById('rescore-btn');
+  const msg = document.getElementById('rescore-msg');
+  btn.disabled = true;
+  btn.textContent = 'Rescoring…';
+  msg.style.display = 'none';
+  try {
+    const res = await fetch('/api/leads/rescore-all', { method: 'POST' });
+    const data = await res.json();
+    msg.style.display = 'inline';
+    msg.textContent = `${data.rescored} of ${data.total_leads} updated`;
+    loadLeads();
+    loadStats();
+  } catch(e) {
+    msg.style.display = 'inline';
+    msg.textContent = 'Error rescoring';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Rescore All';
+  }
 }
 
 // ---------------------------------------------------------------------------

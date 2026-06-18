@@ -1,12 +1,15 @@
 """
-Lead scoring (0–100).  Called on every lead create/update.
+Lead scoring — 0 to 100.
 
-Formula breakdown (max 100 pts):
-  - Base                        50
-  - Filing recency              up to +20  (full pts if filed <30 days ago, decays ~5pts/month)
-  - Absentee owner              +15        (mailing_address != property address)
-  - Estimated equity            up to +10  (tiered: $100k+ / $50k+ / $20k+)
-  - Time-in-pipeline decay      up to -20  (leads untouched >7 days start losing pts)
+Formula (max 100 pts):
+  Base                  50   always
+  Filing recency     +0-20   full pts if filed today, decays 5 pts/month
+  Absentee owner       +15   mailing_address ≠ property address
+  Estimated equity    +0-10   tiered: ≥$100k=10, ≥$50k=5, ≥$20k=2
+  Idle decay         -0-20   leads untouched >7 days lose 2 pts/week
+
+Use score_breakdown() to get the per-component explanation.
+Use calculate_score() when you only need the final number.
 """
 
 from datetime import datetime, timezone
@@ -26,33 +29,94 @@ def _normalize(s: str) -> str:
     return " ".join(s.lower().strip().split())
 
 
-def calculate_score(lead: Lead) -> float:
-    score = 50.0
+def score_breakdown(lead: Lead) -> dict:
+    """
+    Returns the score and a per-component breakdown.
 
-    # Filing recency
+    Shape:
+      {
+        "total": 73.5,
+        "components": {
+          "base":           {"points": 50.0, "max": 50,  "reason": "..."},
+          "filing_recency": {"points": 12.5, "max": 20,  "reason": "..."},
+          "absentee_owner": {"points": 15.0, "max": 15,  "reason": "..."},
+          "equity":         {"points":  5.0, "max": 10,  "reason": "..."},
+          "idle_decay":     {"points": -9.0, "max":  0,  "reason": "..."},
+        }
+      }
+    """
+    components: dict[str, dict] = {}
+    running = 0.0
+
+    # ── Base ─────────────────────────────────────────────────────────────
+    components["base"] = {"points": 50.0, "max": 50, "reason": "Base score"}
+    running += 50.0
+
+    # ── Filing recency ────────────────────────────────────────────────────
     days_filed = _days_ago(lead.filing_date)
     if days_filed is not None:
-        recency = max(0.0, 20.0 - (days_filed / 30) * 5.0)
-        score += recency
+        pts = round(max(0.0, 20.0 - (days_filed / 30) * 5.0), 1)
+        reason = (
+            f"Filed {int(days_filed)}d ago — "
+            f"{pts:.1f} pts (full 20 if <30d, −5 pts per month after)"
+        )
+    else:
+        pts = 0.0
+        reason = "No filing date on record"
+    components["filing_recency"] = {"points": pts, "max": 20, "reason": reason}
+    running += pts
 
-    # Absentee owner
+    # ── Absentee owner ────────────────────────────────────────────────────
     if lead.mailing_address and lead.address:
         if _normalize(lead.mailing_address) != _normalize(lead.address):
-            score += 15.0
+            components["absentee_owner"] = {
+                "points": 15.0, "max": 15,
+                "reason": "Mailing address differs from property — likely absentee owner",
+            }
+            running += 15.0
+        else:
+            components["absentee_owner"] = {
+                "points": 0.0, "max": 15,
+                "reason": "Mailing address matches property — owner-occupied",
+            }
+    else:
+        components["absentee_owner"] = {
+            "points": 0.0, "max": 15,
+            "reason": "No mailing address on record — cannot assess absentee status",
+        }
 
-    # Estimated equity
+    # ── Equity ────────────────────────────────────────────────────────────
     eq = lead.estimated_equity or 0
     if eq >= 100_000:
-        score += 10.0
+        e_pts, e_reason = 10.0, f"${eq:,.0f} equity — ≥$100k tier (+10)"
     elif eq >= 50_000:
-        score += 5.0
+        e_pts, e_reason = 5.0,  f"${eq:,.0f} equity — $50k–$100k tier (+5)"
     elif eq >= 20_000:
-        score += 2.0
+        e_pts, e_reason = 2.0,  f"${eq:,.0f} equity — $20k–$50k tier (+2)"
+    else:
+        e_pts, e_reason = 0.0,  "No equity data or below $20k threshold"
+    components["equity"] = {"points": e_pts, "max": 10, "reason": e_reason}
+    running += e_pts
 
-    # Time-in-pipeline decay (based on last contact, fallback to created_at)
+    # ── Idle decay ────────────────────────────────────────────────────────
+    # Clock starts from last_contact_date if set, else from created_at.
+    idle_source = "last contact" if lead.last_contact_date else "created"
     idle_days = _days_ago(lead.last_contact_date) or _days_ago(lead.created_at) or 0
-    # First 7 days: no decay.  Then lose up to 20 pts (2 pts/week).
-    decay = max(0.0, min(20.0, (idle_days - 7) / 7 * 2.0))
-    score -= decay
+    grace = 7.0
+    decay = round(max(0.0, min(20.0, (idle_days - grace) / 7.0 * 2.0)), 1)
+    if idle_days <= grace:
+        d_reason = f"{idle_days:.0f}d idle ({idle_source}) — within {int(grace)}-day grace window"
+    else:
+        d_reason = (
+            f"{idle_days:.0f}d since {idle_source} — "
+            f"−{decay} pts (−2 pts/week after {int(grace)}-day grace)"
+        )
+    components["idle_decay"] = {"points": -decay, "max": 0, "reason": d_reason}
+    running -= decay
 
-    return round(max(0.0, min(100.0, score)), 1)
+    final = round(max(0.0, min(100.0, running)), 1)
+    return {"total": final, "components": components}
+
+
+def calculate_score(lead: Lead) -> float:
+    return score_breakdown(lead)["total"]

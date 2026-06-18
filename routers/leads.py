@@ -62,6 +62,28 @@ def _normalize_phone(val: str) -> str:
 # Stats (must be before /{lead_id} to avoid routing conflict)
 # ---------------------------------------------------------------------------
 
+@router.post("/rescore-all")
+def rescore_all_leads(db: Session = Depends(get_db)):
+    """
+    Recalculate scores for every lead.
+    Run this at the start of each day so idle-decay penalties stay current.
+    """
+    leads = db.query(Lead).all()
+    updated = 0
+    for lead in leads:
+        new_score = calculate_score(lead)
+        if abs((lead.score or 0.0) - new_score) >= 0.05:
+            lead.score = new_score
+            updated += 1
+    if updated:
+        db.commit()
+    return {
+        "total_leads": len(leads),
+        "rescored": updated,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/stats")
 def get_pipeline_stats(db: Session = Depends(get_db)):
     stage_counts = dict(
@@ -252,3 +274,13 @@ def recalculate_score(lead_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(lead)
     return lead
+
+
+@router.get("/{lead_id}/score-breakdown")
+def get_score_breakdown(lead_id: int, db: Session = Depends(get_db)):
+    """Return the per-component score breakdown for a single lead."""
+    from scoring import score_breakdown
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return score_breakdown(lead)
