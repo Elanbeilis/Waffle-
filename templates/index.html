@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Waffle RE Lead Gen</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Waffle RE Lead Gen</h1>
+  <nav>
+    <a href="#" onclick="showTab('pipeline')">Pipeline</a>
+    <a href="#" onclick="showTab('import')">Import CSV</a>
+    <a href="#" onclick="showTab('pending')">Pending Approvals</a>
+    <a href="#" onclick="showTab('new-lead')">+ Add Lead</a>
+    <a href="/docs" target="_blank">API Docs</a>
+  </nav>
+</header>
+
+<div class="container" style="padding-top:16px;">
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Pipeline tab                                                         -->
+  <!-- ------------------------------------------------------------------ -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('pipeline')">Pipeline</button>
+    <button class="tab-btn" onclick="showTab('import')">Import CSV</button>
+    <button class="tab-btn" onclick="showTab('pending')" id="pending-tab-btn">Pending Approvals</button>
+    <button class="tab-btn" onclick="showTab('new-lead')">+ Add Lead</button>
+  </div>
+
+  <!-- Pipeline -->
+  <div id="tab-pipeline" class="tab-panel active">
+    <div class="filters">
+      <div>
+        <label>Stage</label>
+        <select id="filter-stage" onchange="loadLeads()">
+          <option value="">All stages</option>
+          <option>new</option><option>skip_traced</option><option>contacted</option>
+          <option>responded</option><option>negotiating</option><option>under_contract</option>
+          <option>assigned</option><option>closed</option><option>dead</option>
+        </select>
+      </div>
+      <div>
+        <label>County</label>
+        <input id="filter-county" type="text" placeholder="e.g. Nassau" oninput="loadLeads()" style="width:140px;">
+      </div>
+      <div>
+        <label>Sort by</label>
+        <select id="filter-sort" onchange="loadLeads()">
+          <option value="score">Score ↓</option>
+          <option value="last_contact_date">Last contact ↓</option>
+          <option value="created_at">Created ↓</option>
+          <option value="next_followup_date">Follow-up ↓</option>
+        </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;">
+          <input type="checkbox" id="filter-overdue" onchange="loadLeads()"> Needs follow-up only
+        </label>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button class="btn btn-sm" onclick="loadLeads()">Refresh</button>
+      </div>
+    </div>
+
+    <div id="leads-error" style="display:none;" class="alert alert-danger"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Score</th>
+          <th>Address</th>
+          <th>Owner(s)</th>
+          <th>County</th>
+          <th>Source</th>
+          <th>Filing</th>
+          <th>Stage</th>
+          <th>Last Contact</th>
+          <th>Next Follow-up</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="leads-tbody">
+        <tr><td colspan="10" style="text-align:center;color:#999;">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Import CSV -->
+  <div id="tab-import" class="tab-panel">
+    <div class="card">
+      <h3>Import CSV (Step 2 — coming next)</h3>
+      <p style="color:#666;">The CSV importer with column-mapping will be built in Step 2.
+         For now, use the manual entry form or the JSON API at <code>POST /api/leads</code>.</p>
+    </div>
+  </div>
+
+  <!-- Pending approvals -->
+  <div id="tab-pending" class="tab-panel">
+    <div id="pending-list">
+      <p style="color:#999;">Loading pending approvals…</p>
+    </div>
+  </div>
+
+  <!-- New lead form -->
+  <div id="tab-new-lead" class="tab-panel">
+    <div class="card" style="max-width:900px;">
+      <h3>Add Lead Manually</h3>
+      <div id="new-lead-msg" style="display:none;" class="alert"></div>
+      <form id="new-lead-form" onsubmit="submitNewLead(event)">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Address *</label>
+            <input type="text" name="address" required placeholder="123 Main St">
+          </div>
+          <div class="form-row">
+            <label>City</label>
+            <input type="text" name="city" placeholder="Hempstead">
+          </div>
+          <div class="form-row">
+            <label>County</label>
+            <input type="text" name="county" placeholder="Nassau">
+          </div>
+          <div class="form-row">
+            <label>Owner Name(s) <small>(comma-separated)</small></label>
+            <input type="text" name="owner_names" placeholder="John Doe, Jane Doe">
+          </div>
+          <div class="form-row">
+            <label>Mailing Address <small>(leave blank if same as property)</small></label>
+            <input type="text" name="mailing_address" placeholder="456 Other Ave, New York NY">
+          </div>
+          <div class="form-row">
+            <label>Lead Source</label>
+            <select name="lead_source">
+              <option value="manual">Manual</option>
+              <option value="propstream">PropStream</option>
+              <option value="propertyshark">PropertyShark</option>
+              <option value="public_record">Public Record</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Filing Type</label>
+            <select name="filing_type">
+              <option value="none">None</option>
+              <option value="lis_pendens">Lis Pendens</option>
+              <option value="notice_of_default">Notice of Default</option>
+              <option value="notice_of_sale">Notice of Sale</option>
+              <option value="standard_listing">Standard Listing</option>
+              <option value="fsbo">FSBO</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Filing Date</label>
+            <input type="date" name="filing_date">
+          </div>
+          <div class="form-row">
+            <label>Estimated Equity ($)</label>
+            <input type="number" name="estimated_equity" min="0" step="1000" placeholder="75000">
+          </div>
+          <div class="form-row">
+            <label>Phones <small>(comma-separated)</small></label>
+            <input type="text" name="phones" placeholder="+15165550100, +15165550101">
+          </div>
+          <div class="form-row">
+            <label>Emails <small>(comma-separated)</small></label>
+            <input type="text" name="emails" placeholder="owner@example.com">
+          </div>
+          <div class="form-row">
+            <label>Next Follow-up Date</label>
+            <input type="date" name="next_followup_date">
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:4px;">
+          <label>Notes</label>
+          <textarea name="notes" placeholder="Any relevant context…"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Save Lead</button>
+        <button type="reset" class="btn" style="margin-left:8px;">Clear</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Lead detail modal -->
+  <div id="lead-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100; overflow-y:auto;">
+    <div style="background:#fff; max-width:860px; margin:40px auto; border-radius:8px; overflow:hidden;">
+      <div style="background:#1e3a5f; color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+        <strong id="modal-title">Lead Detail</strong>
+        <button onclick="closeModal()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;">&times;</button>
+      </div>
+      <div id="modal-body" style="padding:16px;"></div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ---------------------------------------------------------------------------
+// Tab switching
+// ---------------------------------------------------------------------------
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  const btns = document.querySelectorAll('.tab-btn');
+  const labels = { pipeline: 0, import: 1, pending: 2, 'new-lead': 3 };
+  if (labels[name] !== undefined) btns[labels[name]].classList.add('active');
+  if (name === 'pending') loadPending();
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString();
+}
+
+function scoreBar(score) {
+  const pct = Math.round(score);
+  const color = pct >= 70 ? '#4caf50' : pct >= 40 ? '#ff9800' : '#f44336';
+  return `<span class="score-bar" style="width:${pct * 0.6}px;background:${color};"></span>${pct}`;
+}
+
+async function loadLeads() {
+  const stage = document.getElementById('filter-stage').value;
+  const county = document.getElementById('filter-county').value;
+  const sort = document.getElementById('filter-sort').value;
+  const overdue = document.getElementById('filter-overdue').checked;
+
+  let url = `/api/leads?sort_by=${sort}&sort_dir=desc`;
+  if (stage) url += `&stage=${stage}`;
+  if (county) url += `&county=${encodeURIComponent(county)}`;
+  if (overdue) url += `&needs_followup=true`;
+
+  const tbody = document.getElementById('leads-tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;">Loading…</td></tr>';
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await res.text());
+    const leads = await res.json();
+
+    if (leads.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;">No leads found.</td></tr>';
+      return;
+    }
+
+    const now = new Date();
+    tbody.innerHTML = leads.map(l => {
+      const overdue = l.next_followup_date && new Date(l.next_followup_date) < now;
+      const dnc = l.do_not_contact;
+      const rowClass = dnc ? 'flag-dnc' : overdue ? 'flag-overdue' : '';
+      const owners = (l.owner_names || []).join(', ') || '—';
+      const dncBadge = dnc ? ' <span style="color:#721c24;font-size:11px;">⛔ DNC</span>' : '';
+      return `<tr class="${rowClass}">
+        <td>${scoreBar(l.score || 0)}</td>
+        <td><a href="#" onclick="openLead(${l.id})">${l.address}${l.city ? ', ' + l.city : ''}</a>${dncBadge}</td>
+        <td>${owners}</td>
+        <td>${l.county || '—'}</td>
+        <td>${l.lead_source}</td>
+        <td>${l.filing_type !== 'none' ? l.filing_type.replace(/_/g,' ') : '—'}</td>
+        <td><span class="badge badge-${l.pipeline_stage}">${l.pipeline_stage.replace(/_/g,' ')}</span></td>
+        <td>${fmtDate(l.last_contact_date)}</td>
+        <td style="${overdue ? 'color:#b45309;font-weight:600;' : ''}">${fmtDate(l.next_followup_date)}</td>
+        <td>
+          <button class="btn btn-sm" onclick="openLead(${l.id})">View</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteLead(${l.id})">Del</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    const err = document.getElementById('leads-error');
+    err.style.display = 'block';
+    err.textContent = 'Error loading leads: ' + e.message;
+  }
+}
+
+async function deleteLead(id) {
+  if (!confirm('Delete lead #' + id + '? This cannot be undone.')) return;
+  await fetch(`/api/leads/${id}`, { method: 'DELETE' });
+  loadLeads();
+}
+
+// ---------------------------------------------------------------------------
+// New lead form
+// ---------------------------------------------------------------------------
+async function submitNewLead(e) {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData(form);
+  const msg = document.getElementById('new-lead-msg');
+
+  const splitCSV = v => v ? v.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  const payload = {
+    address: fd.get('address'),
+    city: fd.get('city') || null,
+    county: fd.get('county') || null,
+    owner_names: splitCSV(fd.get('owner_names')),
+    mailing_address: fd.get('mailing_address') || null,
+    lead_source: fd.get('lead_source'),
+    filing_type: fd.get('filing_type'),
+    filing_date: fd.get('filing_date') || null,
+    estimated_equity: fd.get('estimated_equity') ? parseFloat(fd.get('estimated_equity')) : null,
+    phones: splitCSV(fd.get('phones')),
+    emails: splitCSV(fd.get('emails')),
+    next_followup_date: fd.get('next_followup_date') || null,
+    notes: fd.get('notes') || null,
+  };
+
+  try {
+    const res = await fetch('/api/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+      msg.className = 'alert alert-warning';
+      msg.style.display = 'block';
+      msg.innerHTML = `⚠️ Duplicate detected: <strong>${data.detail.message}</strong>
+        <a href="#" onclick="openLead(${data.detail.existing_lead_id})">View existing lead #${data.detail.existing_lead_id}</a>`;
+      return;
+    }
+    if (!res.ok) throw new Error(JSON.stringify(data));
+    msg.className = 'alert alert-success';
+    msg.style.display = 'block';
+    msg.innerHTML = `✅ Lead saved — <a href="#" onclick="openLead(${data.id})">View lead #${data.id}</a>`;
+    form.reset();
+    showTab('pipeline');
+    loadLeads();
+  } catch(ex) {
+    msg.className = 'alert alert-danger';
+    msg.style.display = 'block';
+    msg.textContent = 'Error: ' + ex.message;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lead detail modal
+// ---------------------------------------------------------------------------
+async function openLead(id) {
+  const modal = document.getElementById('lead-modal');
+  const body = document.getElementById('modal-body');
+  document.getElementById('modal-title').textContent = `Lead #${id}`;
+  body.innerHTML = '<p style="padding:20px;color:#999;">Loading…</p>';
+  modal.style.display = 'block';
+
+  const [leadRes, outreachRes] = await Promise.all([
+    fetch(`/api/leads/${id}`),
+    fetch(`/api/leads/${id}/outreach`),
+  ]);
+  const lead = await leadRes.json();
+  const logs = await outreachRes.json();
+
+  const dncWarning = lead.do_not_contact
+    ? `<div class="dnc-banner">⛔ DO NOT CONTACT — ${lead.do_not_contact_reason || 'flagged manually'}</div>`
+    : '';
+
+  const rows = (obj) => Object.entries(obj)
+    .filter(([,v]) => v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0))
+    .map(([k,v]) => `<tr><td style="font-weight:600;color:#555;width:160px;">${k.replace(/_/g,' ')}</td><td>${Array.isArray(v) ? v.join(', ') : v}</td></tr>`)
+    .join('');
+
+  const infoFields = {
+    address: lead.address, city: lead.city, county: lead.county,
+    owner_names: lead.owner_names, mailing_address: lead.mailing_address,
+    lead_source: lead.lead_source, filing_type: lead.filing_type,
+    filing_date: lead.filing_date ? new Date(lead.filing_date).toLocaleDateString() : null,
+    estimated_equity: lead.estimated_equity ? '$' + lead.estimated_equity.toLocaleString() : null,
+    phones: lead.phones, emails: lead.emails,
+    skip_trace_status: lead.skip_trace_status,
+    score: lead.score,
+    created_at: new Date(lead.created_at).toLocaleString(),
+  };
+
+  const thread = logs.length === 0
+    ? '<p style="color:#999;font-size:13px;">No outreach logged yet.</p>'
+    : `<div class="thread">${logs.map(l => `
+        <div class="thread-msg ${l.direction}">
+          ${l.content || '(no content)'}
+          <div class="meta">${l.channel} · ${l.direction} · ${new Date(l.created_at).toLocaleString()} · status: ${l.status}${l.ai_drafted ? ' · AI-drafted' : ''}${l.opt_out_detected ? ' · <strong style="color:#721c24;">OPT-OUT DETECTED</strong>' : ''}</div>
+        </div>`).join('')}</div>`;
+
+  body.innerHTML = `
+    ${dncWarning}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div>
+        <div class="card">
+          <h3>Lead Info</h3>
+          <table style="box-shadow:none;border-radius:0;">
+            <tbody>${rows(infoFields)}</tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Stage &amp; Follow-up</h3>
+          <div class="form-row">
+            <label>Pipeline Stage</label>
+            <select id="modal-stage" onchange="updateStage(${lead.id}, this.value)">
+              ${['new','skip_traced','contacted','responded','negotiating','under_contract','assigned','closed','dead']
+                .map(s => `<option ${s === lead.pipeline_stage ? 'selected' : ''} value="${s}">${s.replace(/_/g,' ')}</option>`)
+                .join('')}
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Next Follow-up</label>
+            <input type="date" id="modal-followup" value="${lead.next_followup_date ? lead.next_followup_date.slice(0,10) : ''}"
+              onchange="updateFollowup(${lead.id}, this.value)">
+          </div>
+          <div class="form-row">
+            <label>Notes</label>
+            <textarea id="modal-notes" rows="4">${lead.notes || ''}</textarea>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveNotes(${lead.id})">Save Notes</button>
+          &nbsp;<label style="font-size:12px;">
+            <input type="checkbox" id="modal-dnc" ${lead.do_not_contact ? 'checked' : ''} onchange="toggleDnc(${lead.id}, this.checked)">
+            Do Not Contact
+          </label>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>Outreach History</h3>
+          ${thread}
+          <div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px;">
+            <strong style="font-size:13px;">Log Inbound Reply</strong>
+            <div class="form-row" style="margin-top:8px;">
+              <label>Channel</label>
+              <select id="inbound-channel"><option value="sms">SMS</option><option value="email">Email</option><option value="call">Call</option></select>
+            </div>
+            <div class="form-row">
+              <label>Content</label>
+              <textarea id="inbound-content" rows="3" placeholder="What did they say?"></textarea>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="logInbound(${lead.id})">Log Reply</button>
+          </div>
+        </div>
+        <div class="card" id="ai-panel-card">
+          <h3>AI Drafting <small style="font-weight:400;color:#888;">(Step 6)</small></h3>
+          <p style="color:#999;font-size:13px;">AI drafting via Claude API will be wired in Step 6.</p>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function updateStage(id, stage) {
+  await fetch(`/api/leads/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipeline_stage: stage }),
+  });
+  loadLeads();
+}
+
+async function updateFollowup(id, date) {
+  await fetch(`/api/leads/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ next_followup_date: date || null }),
+  });
+}
+
+async function saveNotes(id) {
+  const notes = document.getElementById('modal-notes').value;
+  await fetch(`/api/leads/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes }),
+  });
+  const btn = event.target;
+  btn.textContent = 'Saved ✓';
+  setTimeout(() => { btn.textContent = 'Save Notes'; }, 1500);
+}
+
+async function toggleDnc(id, checked) {
+  await fetch(`/api/leads/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ do_not_contact: checked, do_not_contact_reason: checked ? 'Flagged manually' : null }),
+  });
+  openLead(id); // refresh modal
+}
+
+async function logInbound(leadId) {
+  const channel = document.getElementById('inbound-channel').value;
+  const content = document.getElementById('inbound-content').value;
+  await fetch(`/api/leads/${leadId}/outreach`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel, direction: 'inbound', content, status: 'sent', sent_at: new Date().toISOString() }),
+  });
+  openLead(leadId); // refresh
+}
+
+function closeModal() {
+  document.getElementById('lead-modal').style.display = 'none';
+  loadLeads();
+}
+
+// ---------------------------------------------------------------------------
+// Pending approvals
+// ---------------------------------------------------------------------------
+async function loadPending() {
+  const container = document.getElementById('pending-list');
+  container.innerHTML = '<p style="color:#999;">Loading…</p>';
+  const res = await fetch('/api/outreach/pending');
+  const items = await res.json();
+  if (items.length === 0) {
+    container.innerHTML = '<p style="color:#999;">No pending approvals.</p>';
+    return;
+  }
+  container.innerHTML = items.map(item => `
+    <div class="pending-item">
+      <div style="font-size:12px;color:#888;margin-bottom:6px;">
+        Lead #${item.lead_id} · ${item.channel} · ${item.ai_drafted ? 'AI-drafted' : 'manual'} · ${new Date(item.created_at).toLocaleString()}
+      </div>
+      <textarea id="pending-content-${item.id}" rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">${item.content || ''}</textarea>
+      <div class="actions">
+        <button class="btn btn-primary btn-sm" onclick="approveItem(${item.id})">Approve &amp; Send</button>
+        <button class="btn btn-sm" onclick="discardItem(${item.id})">Discard</button>
+      </div>
+    </div>`).join('');
+
+  const btn = document.getElementById('pending-tab-btn');
+  btn.textContent = `Pending Approvals (${items.length})`;
+}
+
+async function approveItem(id) {
+  const content = document.getElementById('pending-content-' + id).value;
+  await fetch(`/api/outreach/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'approved', content }),
+  });
+  loadPending();
+}
+
+async function discardItem(id) {
+  await fetch(`/api/outreach/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'discarded' }),
+  });
+  loadPending();
+}
+
+// ---------------------------------------------------------------------------
+// Close modal on backdrop click
+// ---------------------------------------------------------------------------
+document.getElementById('lead-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+// Initial load
+loadLeads();
+</script>
+</body>
+</html>
