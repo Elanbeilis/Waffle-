@@ -550,27 +550,72 @@ async function loadPending() {
     return;
   }
   container.innerHTML = items.map(item => `
-    <div class="pending-item">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">
-        <a href="/lead/${item.lead_id}">Lead #${item.lead_id}</a> ·
-        ${item.channel} · ${item.ai_drafted ? '🤖 AI-drafted' : 'manual'} · ${new Date(item.created_at).toLocaleString()}
+    <div class="pending-item" id="pending-item-${item.id}">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <a href="/lead/${item.lead_id}">Lead #${item.lead_id}</a>
+        <span class="badge channel-${item.channel}" style="font-size:10px;">${item.channel.toUpperCase()}</span>
+        ${item.ai_drafted ? '<span style="background:#e8d5f5;color:#5b21b6;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;">AI</span>' : ''}
+        <span style="color:#aaa;">${new Date(item.created_at).toLocaleString()}</span>
       </div>
-      <textarea id="pending-content-${item.id}" rows="4"
-        style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">${item.content || ''}</textarea>
-      <div class="actions">
-        <button class="btn btn-primary btn-sm" onclick="approveItem(${item.id})">Approve</button>
+      <textarea id="pending-content-${item.id}" rows="${item.channel === 'sms' ? 3 : 6}"
+        style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;">${item.content || ''}</textarea>
+      <div id="pending-err-${item.id}" class="alert alert-warning" style="display:none;margin-top:6px;font-size:12px;"></div>
+      <div class="actions" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="send-btn-${item.id}" onclick="sendItem(${item.id})">Send Now</button>
         <button class="btn btn-sm" onclick="discardItem(${item.id})">Discard</button>
+        <span style="font-size:11px;color:#888;">Edit above before sending · Nothing is sent until you click Send Now.</span>
       </div>
     </div>`).join('');
 }
 
-async function approveItem(id) {
+async function sendItem(id) {
+  const btn    = document.getElementById('send-btn-' + id);
+  const errEl  = document.getElementById('pending-err-' + id);
   const content = document.getElementById('pending-content-' + id).value;
-  await fetch(`/api/outreach/${id}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'approved', content }),
-  });
-  loadPending();
+
+  btn.disabled  = true;
+  btn.textContent = 'Sending…';
+  errEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/outreach/${id}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      const detail = data.detail || {};
+      const reason = detail.reason || '';
+      let html = `⚠️ <strong>Blocked${reason ? ' — ' + reason.replace(/_/g, ' ') : ''}:</strong> ${detail.message || JSON.stringify(detail)}`;
+      if (detail.instructions) html += `<br><span style="color:#555;">${detail.instructions}</span>`;
+      errEl.innerHTML = html;
+      errEl.style.display = 'block';
+      return;
+    }
+
+    // Success — remove item from queue
+    const item = document.getElementById('pending-item-' + id);
+    if (item) {
+      item.style.background = '#d4edda';
+      item.innerHTML = `<div style="padding:8px;font-size:13px;color:#155724;">✅ Sent — Log #${data.id} · ${data.channel} · <a href="/lead/${data.lead_id}">Lead #${data.lead_id}</a></div>`;
+      setTimeout(() => { item.remove(); updatePendingBadge(); }, 2500);
+    }
+    loadStats();
+  } catch(e) {
+    errEl.textContent = 'Network error: ' + e.message;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Now';
+  }
+}
+
+function updatePendingBadge() {
+  const remaining = document.querySelectorAll('[id^="pending-item-"]').length;
+  const btn = document.getElementById('pending-tab-btn');
+  btn.textContent = remaining > 0 ? `Pending Approvals (${remaining})` : 'Pending Approvals';
 }
 
 async function discardItem(id) {
