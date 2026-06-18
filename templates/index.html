@@ -37,6 +37,7 @@
 
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('pipeline')">Pipeline</button>
+    <button class="tab-btn" onclick="showTab('skip-trace')" id="skip-trace-tab-btn">Skip Trace</button>
     <button class="tab-btn" onclick="showTab('import')">Import CSV</button>
     <button class="tab-btn" onclick="showTab('pending')" id="pending-tab-btn">Pending Approvals</button>
     <button class="tab-btn" onclick="showTab('new-lead')">+ Add Lead</button>
@@ -128,6 +129,55 @@
       </thead>
       <tbody id="leads-tbody">
         <tr><td colspan="10" style="text-align:center;color:#999;padding:24px;">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- SKIP TRACE TAB                                                       -->
+  <!-- ================================================================== -->
+  <div id="tab-skip-trace" class="tab-panel">
+
+    <!-- Stats bar -->
+    <div class="stat-strip" style="margin-bottom:14px;">
+      <div class="stat-box"><div class="num" id="st-stat-needs" style="color:#1e5fa0;">—</div><div class="lbl">Need trace</div></div>
+      <div class="stat-box"><div class="num" id="st-stat-queued" style="color:#ff9800;">—</div><div class="lbl">Queued</div></div>
+      <div class="stat-box"><div class="num" id="st-stat-complete" style="color:#4caf50;">—</div><div class="lbl">Complete</div></div>
+      <div class="stat-box"><div class="num" id="st-stat-failed" style="color:#f44336;">—</div><div class="lbl">Failed</div></div>
+    </div>
+
+    <div class="alert alert-info" style="margin-bottom:12px;font-size:13px;">
+      <strong>Provider not wired in?</strong>
+      Use the <strong>Queue</strong> button to mark leads for batch processing,
+      then implement <code>stubs/skip_trace.py → skip_trace_lead()</code> and hit <strong>Run All Queued</strong>.
+      Until then, use the manual form on each lead detail page.
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="runAllQueued()">▶ Run All Queued</button>
+      <button class="btn btn-sm" onclick="loadSkipTraceQueue()">Refresh</button>
+      <span id="st-run-msg" style="font-size:13px;"></span>
+    </div>
+
+    <div id="st-not-implemented-banner" style="display:none;" class="alert alert-warning">
+      ⚠️ Skip trace provider is not yet implemented.
+      Open <strong>stubs/skip_trace.py</strong> and add your provider call to <code>skip_trace_lead()</code>.
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:58px;">Score</th>
+          <th>Address</th>
+          <th>Owner(s)</th>
+          <th>County</th>
+          <th>Status</th>
+          <th>Phones</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="st-tbody">
+        <tr><td colspan="7" style="text-align:center;color:#999;padding:24px;">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -300,9 +350,10 @@ function showTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const map = { pipeline: 0, import: 1, pending: 2, 'new-lead': 3 };
+  const map = { pipeline: 0, 'skip-trace': 1, import: 2, pending: 3, 'new-lead': 4 };
   if (map[name] !== undefined) document.querySelectorAll('.tab-btn')[map[name]].classList.add('active');
   if (name === 'pending') loadPending();
+  if (name === 'skip-trace') loadSkipTraceQueue();
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +706,112 @@ function resetImport() {
   document.getElementById('import-file').value='';
 }
 
+// ---------------------------------------------------------------------------
+// Skip Trace tab
+// ---------------------------------------------------------------------------
+
+async function loadSkipTraceQueue() {
+  const [queueRes, statsRes] = await Promise.all([
+    fetch('/api/skip-trace/queue'),
+    fetch('/api/skip-trace/stats'),
+  ]);
+  const queue = await queueRes.json();
+  const stats = await statsRes.json();
+
+  document.getElementById('st-stat-needs').textContent    = stats.needs_trace;
+  document.getElementById('st-stat-queued').textContent   = stats.queued;
+  document.getElementById('st-stat-complete').textContent = stats.by_status?.complete || 0;
+  document.getElementById('st-stat-failed').textContent   = stats.by_status?.failed || 0;
+
+  const tabBtn = document.getElementById('skip-trace-tab-btn');
+  tabBtn.textContent = stats.total_actionable > 0
+    ? `Skip Trace (${stats.total_actionable})`
+    : 'Skip Trace';
+
+  const tbody = document.getElementById('st-tbody');
+  if (!queue.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:24px;">No leads need skip tracing.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = queue.map(l => {
+    const isPending = l.skip_trace_status === 'pending';
+    const statusBadge = isPending
+      ? '<span style="background:#fff3cd;color:#7a5000;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">⏳ queued</span>'
+      : '<span style="background:#e3f0ff;color:#1e5fa0;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">new</span>';
+    const phones = (l.phones || []).join(', ') || '—';
+    const owners = (l.owner_names || []).join(', ') || '—';
+
+    return `<tr>
+      <td>${scoreCell(l.score)}</td>
+      <td><a href="/lead/${l.id}" style="color:#1e5fa0;text-decoration:none;font-weight:500;">${l.address}</a>
+        ${l.city ? '<br><span style="font-size:11px;color:#888;">' + l.city + '</span>' : ''}</td>
+      <td style="font-size:12px;">${owners}</td>
+      <td style="font-size:12px;">${l.county || '—'}</td>
+      <td>${statusBadge}</td>
+      <td style="font-size:12px;">${phones}</td>
+      <td>
+        ${isPending
+          ? `<button class="btn btn-sm" onclick="dequeueSkipTrace(${l.id})" title="Remove from queue">Dequeue</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="queueSkipTrace(${l.id})" title="Mark as queued for provider run">Queue</button>`
+        }
+        <button class="btn btn-sm" onclick="runOneLead(${l.id})" title="Run provider skip trace now">Run</button>
+        <a href="/lead/${l.id}" class="btn btn-sm">View</a>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function queueSkipTrace(leadId) {
+  await fetch(`/api/skip-trace/${leadId}/status?status=pending`, { method: 'PATCH' });
+  loadSkipTraceQueue();
+}
+
+async function dequeueSkipTrace(leadId) {
+  await fetch(`/api/skip-trace/${leadId}/status?status=not_needed`, { method: 'PATCH' });
+  loadSkipTraceQueue();
+}
+
+async function runOneLead(leadId) {
+  const banner = document.getElementById('st-not-implemented-banner');
+  banner.style.display = 'none';
+  const res = await fetch(`/api/skip-trace/${leadId}/trigger`, { method: 'POST' });
+  if (res.status === 501) {
+    banner.style.display = 'block';
+    return;
+  }
+  if (res.ok) {
+    loadSkipTraceQueue();
+    loadStats();
+  }
+}
+
+async function runAllQueued() {
+  const banner = document.getElementById('st-not-implemented-banner');
+  const msgEl = document.getElementById('st-run-msg');
+  banner.style.display = 'none';
+  msgEl.textContent = 'Running…';
+
+  const res = await fetch('/api/skip-trace/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ all_queued: true }),
+  });
+  const data = await res.json();
+
+  if (data.not_implemented) {
+    banner.style.display = 'block';
+    msgEl.textContent = '';
+    return;
+  }
+  msgEl.textContent = `Done — ${data.succeeded} succeeded, ${data.failed} failed, ${data.skipped_dnc} DNC skipped.`;
+  loadSkipTraceQueue();
+  loadStats();
+}
+
+// ---------------------------------------------------------------------------
 // Initial load
+// ---------------------------------------------------------------------------
 loadLeads();
 loadStats();
 </script>

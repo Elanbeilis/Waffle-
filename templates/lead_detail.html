@@ -308,11 +308,25 @@
             <input type="text" id="st-notes" placeholder="e.g. matched via IDI">
           </div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="saveSkipTrace()">Save Skip Trace Results</button>
-        <p style="font-size:12px;color:#888;margin-top:8px;">
-          Saving will set status → complete and advance stage new → skip_traced.
-          Provider API integration added in Step 4.
-        </p>
+        <button class="btn btn-primary btn-sm" onclick="saveSkipTrace()">Save Manual Results</button>
+
+        <div style="border-top:1px solid #eee;margin-top:14px;padding-top:12px;">
+          <div style="font-size:12px;font-weight:700;color:#555;margin-bottom:8px;">PROVIDER SKIP TRACE</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            {% if lead.skip_trace_status.value == 'pending' %}
+            <span style="font-size:12px;color:#7a5000;">⏳ Queued for provider run</span>
+            <button class="btn btn-sm" onclick="setStStatus('not_needed')">Remove from queue</button>
+            {% else %}
+            <button class="btn btn-sm" onclick="setStStatus('pending')">Queue for Provider Run</button>
+            {% endif %}
+            <button class="btn btn-sm" id="run-provider-btn" onclick="runProviderSkipTrace()">Run Provider Now</button>
+          </div>
+          <div id="provider-st-msg" class="alert" style="display:none;margin-top:8px;font-size:13px;"></div>
+          <p style="font-size:11px;color:#999;margin-top:6px;">
+            "Queue" marks this lead for the next batch run. "Run Now" calls the provider immediately.
+            Implement <code>stubs/skip_trace.py</code> first.
+          </p>
+        </div>
       </div>
 
       <!-- Outreach history -->
@@ -577,6 +591,42 @@ async function logOutbound() {
     document.getElementById('outbound-content').value = '';
     location.reload();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Provider skip trace buttons
+// ---------------------------------------------------------------------------
+async function setStStatus(status) {
+  await fetch(`/api/skip-trace/${LEAD_ID}/status?status=${status}`, { method: 'PATCH' });
+  location.reload();
+}
+
+async function runProviderSkipTrace() {
+  const btn = document.getElementById('run-provider-btn');
+  const msg = document.getElementById('provider-st-msg');
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  msg.style.display = 'none';
+
+  const res = await fetch(`/api/skip-trace/${LEAD_ID}/trigger`, { method: 'POST' });
+  if (res.status === 501) {
+    const data = await res.json();
+    msg.className = 'alert alert-warning';
+    msg.style.display = 'block';
+    msg.innerHTML = `⚠️ <strong>Provider not implemented.</strong> ${data.detail?.instructions || ''}`;
+  } else if (res.ok) {
+    msg.className = 'alert alert-success';
+    msg.style.display = 'block';
+    msg.textContent = 'Skip trace complete. Reloading…';
+    setTimeout(() => location.reload(), 800);
+  } else {
+    const data = await res.json();
+    msg.className = 'alert alert-danger';
+    msg.style.display = 'block';
+    msg.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+  }
+  btn.disabled = false;
+  btn.textContent = 'Run Provider Now';
 }
 
 // Pre-fill datetime-local with now

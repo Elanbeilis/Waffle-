@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, init_db
 from models import FilingType, LeadSource, OutreachChannel, PipelineStage, SkipTraceStatus
-from routers import import_csv, leads, outreach
+from routers import import_csv, leads, outreach, skip_trace
 
 
 @asynccontextmanager
@@ -25,6 +25,7 @@ templates = Jinja2Templates(directory="templates")
 app.include_router(leads.router, prefix="/api")
 app.include_router(outreach.router, prefix="/api")
 app.include_router(import_csv.router, prefix="/api")
+app.include_router(skip_trace.router, prefix="/api")
 
 
 @app.get("/", response_class=HTMLResponse)
