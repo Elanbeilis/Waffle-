@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lead #{{ lead.id }} — {{ lead.address }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .info-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#888; display:block; margin-bottom:2px; }
+    .info-value { font-size:14px; color:#1a1a1a; margin-bottom:12px; min-height:20px; }
+    .info-value a { color:#1e5fa0; text-decoration:none; }
+    .channel-sms   { background:#e3f0ff; color:#1e5fa0; }
+    .channel-email { background:#fff3cd; color:#7a5000; }
+    .channel-call  { background:#d4edda; color:#155724; }
+    .save-btn { padding:3px 12px; border-radius:3px; border:1px solid #ccc; background:#fff; cursor:pointer; font-size:12px; }
+    .save-btn:hover { background:#f0f0f0; }
+    .save-feedback { font-size:12px; color:#155724; margin-left:6px; display:none; }
+    .section-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#555; border-bottom:1px solid #eee; padding-bottom:6px; margin:0 0 14px; }
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media(max-width:900px) { .two-col { grid-template-columns:1fr; } }
+    .inline-edit { display:inline-flex; align-items:center; gap:6px; }
+    .inline-edit input, .inline-edit select, .inline-edit textarea {
+      padding:4px 8px; border:1px solid #ccc; border-radius:3px; font-size:13px; font-family:inherit;
+    }
+    .thread-item { border-left:3px solid #e0e0e0; padding:8px 12px; margin-bottom:10px; border-radius:0 4px 4px 0; }
+    .thread-item.outbound { border-left-color:#1e5fa0; background:#f5f9ff; }
+    .thread-item.inbound  { border-left-color:#4caf50; background:#f5fff7; }
+    .thread-meta { font-size:11px; color:#888; margin-top:4px; display:flex; gap:10px; flex-wrap:wrap; }
+    .score-ring { display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; border-radius:50%; border:3px solid #4caf50; font-size:18px; font-weight:700; color:#1a1a1a; }
+    .score-ring.medium { border-color:#ff9800; }
+    .score-ring.low    { border-color:#f44336; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Waffle RE Lead Gen</h1>
+  <nav>
+    <a href="/">← Pipeline</a>
+    <a href="/docs" target="_blank">API Docs</a>
+  </nav>
+</header>
+
+<div class="container" style="padding-top:16px;">
+
+  <!-- Top bar -->
+  <div class="card" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 16px;">
+    <!-- Score ring -->
+    {% set score = lead.score|int %}
+    {% set ring_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+    <div class="score-ring {{ ring_class }}">{{ score }}</div>
+
+    <div style="flex:1;min-width:200px;">
+      <div style="font-size:18px;font-weight:700;">
+        {{ lead.address }}{% if lead.city %}, {{ lead.city }}{% endif %}
+        {% if lead.county %}<span style="font-size:13px;font-weight:400;color:#666;"> · {{ lead.county }} County</span>{% endif %}
+      </div>
+      <div style="font-size:13px;color:#666;margin-top:2px;">
+        Lead #{{ lead.id }} ·
+        {% if lead.owner_names %}{{ lead.owner_names | join(', ') }}{% else %}No owner on file{% endif %}
+        {% if lead.do_not_contact %}
+        <span style="background:#f8d7da;color:#721c24;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;margin-left:6px;">⛔ DO NOT CONTACT</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Quick controls -->
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <div>
+        <label class="info-label">Stage</label>
+        <select id="ctrl-stage" onchange="patchField('pipeline_stage', this.value, 'stage-fb')" style="padding:5px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">
+          {% for s in pipeline_stages %}
+          <option value="{{ s }}" {% if s == lead.pipeline_stage.value %}selected{% endif %}>{{ s.replace('_',' ') }}</option>
+          {% endfor %}
+        </select>
+        <span id="stage-fb" class="save-feedback">✓</span>
+      </div>
+      <div>
+        <label class="info-label">Next follow-up</label>
+        <input type="date" id="ctrl-followup"
+          value="{{ lead.next_followup_date.strftime('%Y-%m-%d') if lead.next_followup_date else '' }}"
+          onchange="patchField('next_followup_date', this.value || null, 'followup-fb')"
+          style="padding:5px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">
+        <span id="followup-fb" class="save-feedback">✓</span>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+        <label class="info-label">DNC</label>
+        <input type="checkbox" id="ctrl-dnc" {% if lead.do_not_contact %}checked{% endif %}
+          onchange="toggleDnc(this.checked)"
+          style="width:18px;height:18px;cursor:pointer;" title="Do Not Contact">
+      </div>
+    </div>
+  </div>
+
+  {% if lead.do_not_contact %}
+  <div class="dnc-banner">
+    ⛔ DO NOT CONTACT{% if lead.do_not_contact_reason %} — {{ lead.do_not_contact_reason }}{% endif %}
+  </div>
+  {% endif %}
+
+  <div id="page-msg" class="alert" style="display:none;"></div>
+
+  <div class="two-col">
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- LEFT COLUMN                                                        -->
+    <!-- ---------------------------------------------------------------- -->
+    <div>
+
+      <!-- Lead info -->
+      <div class="card">
+        <div class="section-title">Lead Info</div>
+
+        <span class="info-label">Address</span>
+        <div class="info-value" id="disp-address">{{ lead.address }}</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+          <div>
+            <span class="info-label">City</span>
+            <div class="info-value">{{ lead.city or '—' }}</div>
+          </div>
+          <div>
+            <span class="info-label">County</span>
+            <div class="info-value">{{ lead.county or '—' }}</div>
+          </div>
+        </div>
+
+        <span class="info-label">Owner(s)</span>
+        <div class="info-value">{{ lead.owner_names | join(', ') if lead.owner_names else '—' }}</div>
+
+        <span class="info-label">Mailing address
+          {% if lead.mailing_address and lead.mailing_address.lower().strip() != lead.address.lower().strip() %}
+          <span style="background:#d4edda;color:#155724;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px;">ABSENTEE</span>
+          {% endif %}
+        </span>
+        <div class="info-value">{{ lead.mailing_address or '—' }}</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+          <div>
+            <span class="info-label">Source</span>
+            <div class="info-value">{{ lead.lead_source.value }}</div>
+          </div>
+          <div>
+            <span class="info-label">Filing type</span>
+            <div class="info-value">{{ lead.filing_type.value.replace('_',' ') }}</div>
+          </div>
+          <div>
+            <span class="info-label">Filing date</span>
+            <div class="info-value">{{ lead.filing_date.strftime('%b %d, %Y') if lead.filing_date else '—' }}</div>
+          </div>
+          <div>
+            <span class="info-label">Estimated equity</span>
+            <div class="info-value">{{ '${:,.0f}'.format(lead.estimated_equity) if lead.estimated_equity else '—' }}</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+          <div>
+            <span class="info-label">Skip trace status</span>
+            <div class="info-value">{{ lead.skip_trace_status.value.replace('_',' ') }}</div>
+          </div>
+          <div>
+            <span class="info-label">Last contact</span>
+            <div class="info-value">{{ lead.last_contact_date.strftime('%b %d, %Y') if lead.last_contact_date else '—' }}</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+          <div>
+            <span class="info-label">Created</span>
+            <div class="info-value" style="font-size:12px;color:#666;">{{ lead.created_at.strftime('%b %d, %Y %H:%M') if lead.created_at else '—' }}</div>
+          </div>
+          <div>
+            <span class="info-label">Updated</span>
+            <div class="info-value" style="font-size:12px;color:#666;">{{ lead.updated_at.strftime('%b %d, %Y %H:%M') if lead.updated_at else '—' }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edit all fields -->
+      <div class="card">
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          Edit Lead
+          <button class="btn btn-sm" onclick="toggleEditForm()">Toggle</button>
+        </div>
+        <div id="edit-form" style="display:none;">
+          <div id="edit-msg" class="alert" style="display:none;margin-bottom:10px;"></div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Address</label>
+              <input type="text" id="edit-address" value="{{ lead.address }}">
+            </div>
+            <div class="form-row">
+              <label>City</label>
+              <input type="text" id="edit-city" value="{{ lead.city or '' }}">
+            </div>
+            <div class="form-row">
+              <label>County</label>
+              <input type="text" id="edit-county" value="{{ lead.county or '' }}">
+            </div>
+            <div class="form-row">
+              <label>Owner(s) <small>(comma-separated)</small></label>
+              <input type="text" id="edit-owners" value="{{ lead.owner_names | join(', ') if lead.owner_names else '' }}">
+            </div>
+            <div class="form-row">
+              <label>Mailing address</label>
+              <input type="text" id="edit-mailing" value="{{ lead.mailing_address or '' }}">
+            </div>
+            <div class="form-row">
+              <label>Source</label>
+              <select id="edit-source">
+                {% for s in lead_sources %}
+                <option value="{{ s }}" {% if s == lead.lead_source.value %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Filing type</label>
+              <select id="edit-filing-type">
+                {% for t in filing_types %}
+                <option value="{{ t }}" {% if t == lead.filing_type.value %}selected{% endif %}>{{ t.replace('_',' ') }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Filing date</label>
+              <input type="date" id="edit-filing-date" value="{{ lead.filing_date.strftime('%Y-%m-%d') if lead.filing_date else '' }}">
+            </div>
+            <div class="form-row">
+              <label>Estimated equity ($)</label>
+              <input type="number" id="edit-equity" value="{{ lead.estimated_equity | int if lead.estimated_equity else '' }}" min="0" step="1000">
+            </div>
+            <div class="form-row">
+              <label>Phones <small>(comma-separated)</small></label>
+              <input type="text" id="edit-phones" value="{{ lead.phones | join(', ') if lead.phones else '' }}">
+            </div>
+            <div class="form-row">
+              <label>Emails <small>(comma-separated)</small></label>
+              <input type="text" id="edit-emails" value="{{ lead.emails | join(', ') if lead.emails else '' }}">
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div class="card">
+        <div class="section-title">Notes</div>
+        <textarea id="notes-area" rows="5" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;">{{ lead.notes or '' }}</textarea>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-primary btn-sm" onclick="saveNotes()">Save Notes</button>
+          <span id="notes-fb" class="save-feedback">Saved ✓</span>
+        </div>
+      </div>
+
+    </div><!-- /left col -->
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- RIGHT COLUMN                                                       -->
+    <!-- ---------------------------------------------------------------- -->
+    <div>
+
+      <!-- Skip trace -->
+      <div class="card">
+        <div class="section-title">Skip Trace
+          <span style="font-size:11px;font-weight:400;color:#888;margin-left:8px;">
+            Status: <strong>{{ lead.skip_trace_status.value.replace('_', ' ') }}</strong>
+          </span>
+        </div>
+
+        {% if lead.phones or lead.emails %}
+        <div style="margin-bottom:12px;">
+          {% if lead.phones %}
+          <span class="info-label">Phones on file</span>
+          <div class="info-value">
+            {% for p in lead.phones %}<a href="tel:{{ p }}">{{ p }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+          </div>
+          {% endif %}
+          {% if lead.emails %}
+          <span class="info-label">Emails on file</span>
+          <div class="info-value">
+            {% for e in lead.emails %}<a href="mailto:{{ e }}">{{ e }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <div id="st-msg" class="alert" style="display:none;margin-bottom:10px;"></div>
+        <div class="form-row">
+          <label>New phones found <small>(comma-separated)</small></label>
+          <input type="text" id="st-phones" placeholder="+15165550100, +15165550101">
+        </div>
+        <div class="form-row">
+          <label>New emails found <small>(comma-separated)</small></label>
+          <input type="text" id="st-emails" placeholder="owner@example.com">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;">
+          <div class="form-row">
+            <label>Match quality</label>
+            <select id="st-quality">
+              <option value="high">High</option>
+              <option value="medium" selected>Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Notes <small>(optional)</small></label>
+            <input type="text" id="st-notes" placeholder="e.g. matched via IDI">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveSkipTrace()">Save Skip Trace Results</button>
+        <p style="font-size:12px;color:#888;margin-top:8px;">
+          Saving will set status → complete and advance stage new → skip_traced.
+          Provider API integration added in Step 4.
+        </p>
+      </div>
+
+      <!-- Outreach history -->
+      <div class="card">
+        <div class="section-title">Outreach History
+          <span style="font-size:11px;font-weight:400;color:#888;margin-left:8px;">{{ outreach_logs | length }} entries</span>
+        </div>
+
+        <div id="thread-container">
+        {% if outreach_logs %}
+          {% for log in outreach_logs %}
+          <div class="thread-item {{ log.direction.value }}">
+            <div style="font-size:13px;white-space:pre-wrap;">{{ log.content or '(no content)' }}</div>
+            <div class="thread-meta">
+              <span class="badge channel-{{ log.channel.value }}">{{ log.channel.value }}</span>
+              <span>{{ log.direction.value }}</span>
+              <span>{{ log.sent_at.strftime('%b %d %H:%M') if log.sent_at else log.created_at.strftime('%b %d %H:%M') }}</span>
+              <span style="background:#f0f0f0;padding:1px 6px;border-radius:8px;">{{ log.status.value.replace('_',' ') }}</span>
+              {% if log.ai_drafted %}<span style="background:#e8d5f5;color:#5b21b6;padding:1px 6px;border-radius:8px;">AI</span>{% endif %}
+              {% if log.opt_out_detected %}<strong style="color:#721c24;">⛔ OPT-OUT</strong>{% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <p style="color:#999;font-size:13px;">No outreach logged yet.</p>
+        {% endif %}
+        </div>
+
+        <!-- Log inbound -->
+        <div style="border-top:1px solid #eee;margin-top:14px;padding-top:14px;">
+          <div class="section-title" style="font-size:12px;margin-bottom:10px;">Log Inbound Reply</div>
+          <div id="inbound-msg" class="alert" style="display:none;margin-bottom:8px;"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;">
+            <div class="form-row">
+              <label>Channel</label>
+              <select id="inbound-channel">
+                {% for c in channels %}
+                <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Date/time</label>
+              <input type="datetime-local" id="inbound-dt">
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Content</label>
+            <textarea id="inbound-content" rows="3" placeholder="What did they say?"></textarea>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="logInbound()">Log Reply</button>
+        </div>
+
+        <!-- Log outbound -->
+        <div style="border-top:1px solid #eee;margin-top:14px;padding-top:14px;">
+          <div class="section-title" style="font-size:12px;margin-bottom:10px;">Log Outbound Message</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;">
+            <div class="form-row">
+              <label>Channel</label>
+              <select id="outbound-channel">
+                {% for c in channels %}
+                <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Status</label>
+              <select id="outbound-status">
+                <option value="sent">Sent</option>
+                <option value="pending_approval">Pending Approval</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Content</label>
+            <textarea id="outbound-content" rows="3" placeholder="What did you send?"></textarea>
+          </div>
+          <button class="btn btn-sm" onclick="logOutbound()">Log Outbound</button>
+        </div>
+      </div>
+
+      <!-- AI drafting -->
+      <div class="card">
+        <div class="section-title">AI Drafting <small style="font-weight:400;color:#888;">Step 6</small></div>
+        {% if lead.do_not_contact %}
+        <div class="alert alert-danger">
+          ⛔ AI drafting blocked — this lead is marked Do Not Contact.
+          {% if lead.do_not_contact_reason %}Reason: {{ lead.do_not_contact_reason }}{% endif %}
+        </div>
+        {% else %}
+        <p style="color:#999;font-size:13px;">
+          Claude API drafting (first-contact SMS + email, reply analysis) will be wired in Step 6.
+          All AI-drafted messages land in the Pending Approvals queue before anything is sent.
+        </p>
+        {% endif %}
+      </div>
+
+    </div><!-- /right col -->
+  </div>
+
+</div><!-- /container -->
+
+<script>
+const LEAD_ID = {{ lead.id }};
+
+// ---------------------------------------------------------------------------
+// Generic field patch
+// ---------------------------------------------------------------------------
+async function patchField(field, value, feedbackId) {
+  const payload = {};
+  payload[field] = value;
+  const res = await fetch(`/api/leads/${LEAD_ID}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res.ok && feedbackId) {
+    const fb = document.getElementById(feedbackId);
+    if (fb) { fb.style.display = 'inline'; setTimeout(() => { fb.style.display = 'none'; }, 2000); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DNC toggle
+// ---------------------------------------------------------------------------
+async function toggleDnc(checked) {
+  await patchField('do_not_contact', checked, null);
+  await patchField('do_not_contact_reason', checked ? 'Flagged manually' : null, null);
+  location.reload();
+}
+
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+async function saveNotes() {
+  await patchField('notes', document.getElementById('notes-area').value, 'notes-fb');
+}
+
+// ---------------------------------------------------------------------------
+// Edit form
+// ---------------------------------------------------------------------------
+function toggleEditForm() {
+  const f = document.getElementById('edit-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+function _splitCSV(v) { return v ? v.split(',').map(s => s.trim()).filter(Boolean) : []; }
+
+async function saveEdit() {
+  const msgEl = document.getElementById('edit-msg');
+  const payload = {
+    address:         document.getElementById('edit-address').value,
+    city:            document.getElementById('edit-city').value || null,
+    county:          document.getElementById('edit-county').value || null,
+    owner_names:     _splitCSV(document.getElementById('edit-owners').value),
+    mailing_address: document.getElementById('edit-mailing').value || null,
+    lead_source:     document.getElementById('edit-source').value,
+    filing_type:     document.getElementById('edit-filing-type').value,
+    filing_date:     document.getElementById('edit-filing-date').value || null,
+    estimated_equity: document.getElementById('edit-equity').value
+                      ? parseFloat(document.getElementById('edit-equity').value) : null,
+    phones:          _splitCSV(document.getElementById('edit-phones').value),
+    emails:          _splitCSV(document.getElementById('edit-emails').value),
+  };
+  const res = await fetch(`/api/leads/${LEAD_ID}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res.ok) {
+    msgEl.className = 'alert alert-success';
+    msgEl.style.display = 'block';
+    msgEl.textContent = 'Saved. Reloading…';
+    setTimeout(() => location.reload(), 800);
+  } else {
+    const err = await res.json();
+    msgEl.className = 'alert alert-danger';
+    msgEl.style.display = 'block';
+    msgEl.textContent = JSON.stringify(err.detail || err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Skip trace manual entry
+// ---------------------------------------------------------------------------
+async function saveSkipTrace() {
+  const stMsg = document.getElementById('st-msg');
+  const phones = _splitCSV(document.getElementById('st-phones').value);
+  const emails = _splitCSV(document.getElementById('st-emails').value);
+
+  if (!phones.length && !emails.length) {
+    stMsg.className = 'alert alert-warning';
+    stMsg.style.display = 'block';
+    stMsg.textContent = 'Enter at least one phone or email.';
+    return;
+  }
+
+  const payload = {
+    phones,
+    emails,
+    match_quality: document.getElementById('st-quality').value,
+    notes: document.getElementById('st-notes').value || null,
+  };
+
+  const res = await fetch(`/api/leads/${LEAD_ID}/skip-trace-manual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res.ok) {
+    stMsg.className = 'alert alert-success';
+    stMsg.style.display = 'block';
+    stMsg.textContent = 'Skip trace saved. Reloading…';
+    setTimeout(() => location.reload(), 800);
+  } else {
+    const err = await res.json();
+    stMsg.className = 'alert alert-danger';
+    stMsg.style.display = 'block';
+    stMsg.textContent = JSON.stringify(err.detail || err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Log outreach
+// ---------------------------------------------------------------------------
+async function _logOutreach(channel, direction, content, status, sentAt) {
+  const res = await fetch(`/api/leads/${LEAD_ID}/outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel, direction, content, status, sent_at: sentAt || null }),
+  });
+  return res;
+}
+
+async function logInbound() {
+  const msg = document.getElementById('inbound-msg');
+  const content = document.getElementById('inbound-content').value;
+  const channel = document.getElementById('inbound-channel').value;
+  const dt = document.getElementById('inbound-dt').value;
+
+  const res = await _logOutreach(channel, 'inbound', content, 'sent', dt || new Date().toISOString());
+  if (res.ok) {
+    const data = await res.json();
+    msg.className = 'alert alert-success';
+    msg.style.display = 'block';
+    if (data.opt_out_detected) {
+      msg.innerHTML = '⛔ <strong>Opt-out detected</strong> — lead automatically marked Do Not Contact. Reloading…';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      msg.textContent = 'Reply logged. Reloading…';
+      setTimeout(() => location.reload(), 800);
+    }
+  }
+}
+
+async function logOutbound() {
+  const content = document.getElementById('outbound-content').value;
+  const channel = document.getElementById('outbound-channel').value;
+  const status  = document.getElementById('outbound-status').value;
+  const res = await _logOutreach(channel, 'outbound', content, status, new Date().toISOString());
+  if (res.ok) {
+    document.getElementById('outbound-content').value = '';
+    location.reload();
+  }
+}
+
+// Pre-fill datetime-local with now
+document.getElementById('inbound-dt').value = new Date().toISOString().slice(0, 16);
+</script>
+</body>
+</html>

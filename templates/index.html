@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Waffle RE Lead Gen</title>
   <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .stage-strip { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+    .stage-chip {
+      padding:5px 12px; border-radius:16px; font-size:12px; font-weight:600;
+      cursor:pointer; border:2px solid transparent; white-space:nowrap;
+      transition: border-color .1s;
+    }
+    .stage-chip:hover { border-color: #1e3a5f; }
+    .stage-chip.active { border-color: #1e3a5f; }
+    .stat-strip { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+    .stat-box { background:#fff; border-radius:6px; padding:10px 16px; box-shadow:0 1px 3px rgba(0,0,0,.07); text-align:center; min-width:80px; }
+    .stat-box .num { font-size:22px; font-weight:700; line-height:1.2; }
+    .stat-box .lbl { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.04em; }
+  </style>
 </head>
 <body>
 
@@ -13,7 +27,7 @@
   <nav>
     <a href="#" onclick="showTab('pipeline')">Pipeline</a>
     <a href="#" onclick="showTab('import')">Import CSV</a>
-    <a href="#" onclick="showTab('pending')">Pending Approvals</a>
+    <a href="#" onclick="showTab('pending')" >Pending Approvals</a>
     <a href="#" onclick="showTab('new-lead')">+ Add Lead</a>
     <a href="/docs" target="_blank">API Docs</a>
   </nav>
@@ -21,9 +35,6 @@
 
 <div class="container" style="padding-top:16px;">
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Pipeline tab                                                         -->
-  <!-- ------------------------------------------------------------------ -->
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('pipeline')">Pipeline</button>
     <button class="tab-btn" onclick="showTab('import')">Import CSV</button>
@@ -31,21 +42,47 @@
     <button class="tab-btn" onclick="showTab('new-lead')">+ Add Lead</button>
   </div>
 
-  <!-- Pipeline -->
+  <!-- ================================================================== -->
+  <!-- PIPELINE TAB                                                         -->
+  <!-- ================================================================== -->
   <div id="tab-pipeline" class="tab-panel active">
+
+    <!-- Stats strip -->
+    <div class="stat-strip" id="stat-strip">
+      <div class="stat-box"><div class="num" id="stat-total">—</div><div class="lbl">Total</div></div>
+      <div class="stat-box"><div class="num" id="stat-overdue" style="color:#b45309;">—</div><div class="lbl">Overdue</div></div>
+      <div class="stat-box"><div class="num" id="stat-dnc" style="color:#721c24;">—</div><div class="lbl">DNC</div></div>
+    </div>
+
+    <!-- Stage filter chips -->
+    <div class="stage-strip" id="stage-strip">
+      <span class="stage-chip badge badge-new active" data-stage="" onclick="filterStage(this, '')">All</span>
+      <span class="stage-chip badge badge-new" data-stage="new" onclick="filterStage(this,'new')">New</span>
+      <span class="stage-chip badge badge-skip_traced" data-stage="skip_traced" onclick="filterStage(this,'skip_traced')">Skip Traced</span>
+      <span class="stage-chip badge badge-contacted" data-stage="contacted" onclick="filterStage(this,'contacted')">Contacted</span>
+      <span class="stage-chip badge badge-responded" data-stage="responded" onclick="filterStage(this,'responded')">Responded</span>
+      <span class="stage-chip badge badge-negotiating" data-stage="negotiating" onclick="filterStage(this,'negotiating')">Negotiating</span>
+      <span class="stage-chip badge badge-under_contract" data-stage="under_contract" onclick="filterStage(this,'under_contract')">Under Contract</span>
+      <span class="stage-chip badge badge-assigned" data-stage="assigned" onclick="filterStage(this,'assigned')">Assigned</span>
+      <span class="stage-chip badge badge-closed" data-stage="closed" onclick="filterStage(this,'closed')">Closed</span>
+      <span class="stage-chip badge badge-dead" data-stage="dead" onclick="filterStage(this,'dead')">Dead</span>
+    </div>
+
+    <!-- Filters row -->
     <div class="filters">
       <div>
-        <label>Stage</label>
-        <select id="filter-stage" onchange="loadLeads()">
-          <option value="">All stages</option>
-          <option>new</option><option>skip_traced</option><option>contacted</option>
-          <option>responded</option><option>negotiating</option><option>under_contract</option>
-          <option>assigned</option><option>closed</option><option>dead</option>
-        </select>
+        <label>County</label>
+        <input id="filter-county" type="text" placeholder="Nassau" oninput="loadLeads()" style="width:130px;">
       </div>
       <div>
-        <label>County</label>
-        <input id="filter-county" type="text" placeholder="e.g. Nassau" oninput="loadLeads()" style="width:140px;">
+        <label>Source</label>
+        <select id="filter-source" onchange="loadLeads()">
+          <option value="">All sources</option>
+          <option value="propstream">PropStream</option>
+          <option value="propertyshark">PropertyShark</option>
+          <option value="public_record">Public Record</option>
+          <option value="manual">Manual</option>
+        </select>
       </div>
       <div>
         <label>Sort by</label>
@@ -58,13 +95,17 @@
       </div>
       <div>
         <label>&nbsp;</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;">
-          <input type="checkbox" id="filter-overdue" onchange="loadLeads()"> Needs follow-up only
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:13px;">
+          <input type="checkbox" id="filter-overdue" onchange="loadLeads()"> Overdue only
         </label>
       </div>
       <div>
         <label>&nbsp;</label>
         <button class="btn btn-sm" onclick="loadLeads()">Refresh</button>
+      </div>
+      <div style="margin-left:auto;">
+        <label>&nbsp;</label>
+        <span id="leads-count" style="font-size:13px;color:#666;"></span>
       </div>
     </div>
 
@@ -73,12 +114,12 @@
     <table>
       <thead>
         <tr>
-          <th>Score</th>
+          <th style="width:58px;">Score</th>
           <th>Address</th>
           <th>Owner(s)</th>
           <th>County</th>
-          <th>Source</th>
           <th>Filing</th>
+          <th>Equity</th>
           <th>Stage</th>
           <th>Last Contact</th>
           <th>Next Follow-up</th>
@@ -86,15 +127,16 @@
         </tr>
       </thead>
       <tbody id="leads-tbody">
-        <tr><td colspan="10" style="text-align:center;color:#999;">Loading…</td></tr>
+        <tr><td colspan="10" style="text-align:center;color:#999;padding:24px;">Loading…</td></tr>
       </tbody>
     </table>
   </div>
 
-  <!-- Import CSV -->
+  <!-- ================================================================== -->
+  <!-- IMPORT CSV TAB                                                       -->
+  <!-- ================================================================== -->
   <div id="tab-import" class="tab-panel">
 
-    <!-- Step 1: Upload -->
     <div id="import-step1" class="card" style="max-width:700px;">
       <h3>Import CSV — Step 1: Upload</h3>
       <div id="import-upload-msg" style="display:none;" class="alert"></div>
@@ -118,13 +160,11 @@
       <button class="btn btn-primary" onclick="uploadCSV()">Upload &amp; Preview</button>
     </div>
 
-    <!-- Step 2: Column mapping -->
     <div id="import-step2" style="display:none;">
       <div class="card">
         <h3>Step 2: Map Columns</h3>
         <p id="import-file-info" style="font-size:13px;color:#555;"></p>
-        <div id="import-mapping-saved-notice" style="display:none;" class="alert alert-info" style="margin-bottom:8px;"></div>
-
+        <div id="import-mapping-saved-notice" style="display:none;" class="alert alert-info"></div>
         <table style="margin-bottom:16px;">
           <thead>
             <tr>
@@ -135,17 +175,14 @@
           </thead>
           <tbody id="mapping-tbody"></tbody>
         </table>
-
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="runImport()">Run Import</button>
           <button class="btn" onclick="resetImport()">Start Over</button>
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
             <input type="checkbox" id="import-save-mapping" checked>
-            Save this mapping for future <span id="import-source-label">imports</span>
+            Save mapping for future <span id="import-source-label">imports</span>
           </label>
         </div>
-
-        <!-- Sample preview -->
         <details style="margin-top:16px;">
           <summary style="cursor:pointer;font-size:13px;color:#555;">Show sample rows (first 5)</summary>
           <div id="import-sample-table" style="overflow-x:auto;margin-top:8px;"></div>
@@ -153,7 +190,6 @@
       </div>
     </div>
 
-    <!-- Step 3: Results -->
     <div id="import-step3" style="display:none;">
       <div class="card">
         <h3>Import Results</h3>
@@ -165,17 +201,18 @@
         </div>
       </div>
     </div>
-
   </div>
 
-  <!-- Pending approvals -->
+  <!-- ================================================================== -->
+  <!-- PENDING APPROVALS TAB                                               -->
+  <!-- ================================================================== -->
   <div id="tab-pending" class="tab-panel">
-    <div id="pending-list">
-      <p style="color:#999;">Loading pending approvals…</p>
-    </div>
+    <div id="pending-list"><p style="color:#999;">Loading…</p></div>
   </div>
 
-  <!-- New lead form -->
+  <!-- ================================================================== -->
+  <!-- ADD LEAD TAB                                                         -->
+  <!-- ================================================================== -->
   <div id="tab-new-lead" class="tab-panel">
     <div class="card" style="max-width:900px;">
       <h3>Add Lead Manually</h3>
@@ -199,11 +236,11 @@
             <input type="text" name="owner_names" placeholder="John Doe, Jane Doe">
           </div>
           <div class="form-row">
-            <label>Mailing Address <small>(leave blank if same as property)</small></label>
-            <input type="text" name="mailing_address" placeholder="456 Other Ave, New York NY">
+            <label>Mailing Address <small>(blank = same as property)</small></label>
+            <input type="text" name="mailing_address">
           </div>
           <div class="form-row">
-            <label>Lead Source</label>
+            <label>Source</label>
             <select name="lead_source">
               <option value="manual">Manual</option>
               <option value="propstream">PropStream</option>
@@ -228,39 +265,28 @@
           </div>
           <div class="form-row">
             <label>Estimated Equity ($)</label>
-            <input type="number" name="estimated_equity" min="0" step="1000" placeholder="75000">
+            <input type="number" name="estimated_equity" min="0" step="1000">
           </div>
           <div class="form-row">
             <label>Phones <small>(comma-separated)</small></label>
-            <input type="text" name="phones" placeholder="+15165550100, +15165550101">
+            <input type="text" name="phones">
           </div>
           <div class="form-row">
             <label>Emails <small>(comma-separated)</small></label>
-            <input type="text" name="emails" placeholder="owner@example.com">
+            <input type="text" name="emails">
           </div>
           <div class="form-row">
-            <label>Next Follow-up Date</label>
+            <label>Next Follow-up</label>
             <input type="date" name="next_followup_date">
           </div>
         </div>
         <div class="form-row" style="margin-top:4px;">
           <label>Notes</label>
-          <textarea name="notes" placeholder="Any relevant context…"></textarea>
+          <textarea name="notes"></textarea>
         </div>
         <button type="submit" class="btn btn-primary">Save Lead</button>
         <button type="reset" class="btn" style="margin-left:8px;">Clear</button>
       </form>
-    </div>
-  </div>
-
-  <!-- Lead detail modal -->
-  <div id="lead-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100; overflow-y:auto;">
-    <div style="background:#fff; max-width:860px; margin:40px auto; border-radius:8px; overflow:hidden;">
-      <div style="background:#1e3a5f; color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
-        <strong id="modal-title">Lead Detail</strong>
-        <button onclick="closeModal()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;">&times;</button>
-      </div>
-      <div id="modal-body" style="padding:16px;"></div>
     </div>
   </div>
 
@@ -274,47 +300,81 @@ function showTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const btns = document.querySelectorAll('.tab-btn');
-  const labels = { pipeline: 0, import: 1, pending: 2, 'new-lead': 3 };
-  if (labels[name] !== undefined) btns[labels[name]].classList.add('active');
+  const map = { pipeline: 0, import: 1, pending: 2, 'new-lead': 3 };
+  if (map[name] !== undefined) document.querySelectorAll('.tab-btn')[map[name]].classList.add('active');
   if (name === 'pending') loadPending();
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline
+// Pipeline stats + stage chips
+// ---------------------------------------------------------------------------
+let activeStage = '';
+
+function filterStage(el, stage) {
+  document.querySelectorAll('.stage-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  activeStage = stage;
+  loadLeads();
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch('/api/leads/stats');
+    const data = await res.json();
+
+    document.getElementById('stat-total').textContent   = data.total;
+    document.getElementById('stat-overdue').textContent = data.overdue;
+    document.getElementById('stat-dnc').textContent     = data.dnc;
+
+    // Update stage chip counts
+    Object.entries(data.by_stage || {}).forEach(([stage, count]) => {
+      const chip = document.querySelector(`.stage-chip[data-stage="${stage}"]`);
+      if (chip && count > 0) {
+        chip.textContent = `${stage.replace(/_/g,' ')} (${count})`;
+      }
+    });
+  } catch(e) { /* non-fatal */ }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline table
 // ---------------------------------------------------------------------------
 function fmtDate(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 }
 
-function scoreBar(score) {
-  const pct = Math.round(score);
+function scoreCell(score) {
+  const pct = Math.round(score || 0);
   const color = pct >= 70 ? '#4caf50' : pct >= 40 ? '#ff9800' : '#f44336';
-  return `<span class="score-bar" style="width:${pct * 0.6}px;background:${color};"></span>${pct}`;
+  return `<span style="display:inline-block;width:${Math.round(pct*.5)}px;height:7px;background:${color};border-radius:3px;vertical-align:middle;margin-right:4px;"></span><strong>${pct}</strong>`;
 }
 
 async function loadLeads() {
-  const stage = document.getElementById('filter-stage').value;
-  const county = document.getElementById('filter-county').value;
-  const sort = document.getElementById('filter-sort').value;
+  const stage   = activeStage;
+  const county  = document.getElementById('filter-county').value;
+  const source  = document.getElementById('filter-source').value;
+  const sort    = document.getElementById('filter-sort').value;
   const overdue = document.getElementById('filter-overdue').checked;
 
   let url = `/api/leads?sort_by=${sort}&sort_dir=desc`;
-  if (stage) url += `&stage=${stage}`;
-  if (county) url += `&county=${encodeURIComponent(county)}`;
+  if (stage)   url += `&stage=${stage}`;
+  if (county)  url += `&county=${encodeURIComponent(county)}`;
+  if (source)  url += `&source=${source}`;
   if (overdue) url += `&needs_followup=true`;
 
   const tbody = document.getElementById('leads-tbody');
-  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;padding:24px;">Loading…</td></tr>';
 
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(await res.text());
     const leads = await res.json();
 
+    document.getElementById('leads-count').textContent = leads.length + ' lead' + (leads.length === 1 ? '' : 's');
+
     if (leads.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;">No leads found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;padding:24px;">No leads match the current filters.</td></tr>';
       return;
     }
 
@@ -324,19 +384,28 @@ async function loadLeads() {
       const dnc = l.do_not_contact;
       const rowClass = dnc ? 'flag-dnc' : overdue ? 'flag-overdue' : '';
       const owners = (l.owner_names || []).join(', ') || '—';
-      const dncBadge = dnc ? ' <span style="color:#721c24;font-size:11px;">⛔ DNC</span>' : '';
+      const equity = l.estimated_equity ? '$' + Math.round(l.estimated_equity / 1000) + 'k' : '—';
+      const filing = l.filing_type !== 'none' ? l.filing_type.replace(/_/g,' ') : '—';
+      const dncIcon = dnc ? ' <span title="Do Not Contact" style="color:#721c24;">⛔</span>' : '';
+      const absentee = l.mailing_address && l.mailing_address.toLowerCase().trim() !== l.address.toLowerCase().trim()
+        ? ' <span title="Absentee owner" style="font-size:10px;background:#d4edda;color:#155724;padding:1px 4px;border-radius:4px;">ABS</span>' : '';
+
       return `<tr class="${rowClass}">
-        <td>${scoreBar(l.score || 0)}</td>
-        <td><a href="#" onclick="openLead(${l.id})">${l.address}${l.city ? ', ' + l.city : ''}</a>${dncBadge}</td>
-        <td>${owners}</td>
-        <td>${l.county || '—'}</td>
-        <td>${l.lead_source}</td>
-        <td>${l.filing_type !== 'none' ? l.filing_type.replace(/_/g,' ') : '—'}</td>
-        <td><span class="badge badge-${l.pipeline_stage}">${l.pipeline_stage.replace(/_/g,' ')}</span></td>
-        <td>${fmtDate(l.last_contact_date)}</td>
-        <td style="${overdue ? 'color:#b45309;font-weight:600;' : ''}">${fmtDate(l.next_followup_date)}</td>
+        <td>${scoreCell(l.score)}</td>
         <td>
-          <button class="btn btn-sm" onclick="openLead(${l.id})">View</button>
+          <a href="/lead/${l.id}" style="color:#1e5fa0;text-decoration:none;font-weight:500;">${l.address}${absentee}</a>
+          ${dncIcon}
+          ${l.city ? '<br><span style="font-size:11px;color:#888;">' + l.city + (l.county ? ' · ' + l.county : '') + '</span>' : ''}
+        </td>
+        <td style="font-size:12px;">${owners}</td>
+        <td style="font-size:12px;">${l.county || '—'}</td>
+        <td style="font-size:12px;">${filing}${l.filing_date ? '<br><span style="color:#888;">' + fmtDate(l.filing_date) + '</span>' : ''}</td>
+        <td style="font-size:12px;">${equity}</td>
+        <td><span class="badge badge-${l.pipeline_stage}">${l.pipeline_stage.replace(/_/g,' ')}</span></td>
+        <td style="font-size:12px;">${fmtDate(l.last_contact_date)}</td>
+        <td style="font-size:12px;${overdue ? 'color:#b45309;font-weight:600;' : ''}">${fmtDate(l.next_followup_date)}</td>
+        <td>
+          <a href="/lead/${l.id}" class="btn btn-sm btn-primary">View</a>
           <button class="btn btn-sm btn-danger" onclick="deleteLead(${l.id})">Del</button>
         </td>
       </tr>`;
@@ -349,9 +418,10 @@ async function loadLeads() {
 }
 
 async function deleteLead(id) {
-  if (!confirm('Delete lead #' + id + '? This cannot be undone.')) return;
+  if (!confirm(`Delete lead #${id}? This cannot be undone.`)) return;
   await fetch(`/api/leads/${id}`, { method: 'DELETE' });
   loadLeads();
+  loadStats();
 }
 
 // ---------------------------------------------------------------------------
@@ -362,23 +432,22 @@ async function submitNewLead(e) {
   const form = e.target;
   const fd = new FormData(form);
   const msg = document.getElementById('new-lead-msg');
-
-  const splitCSV = v => v ? v.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const split = v => v ? v.split(',').map(s => s.trim()).filter(Boolean) : [];
 
   const payload = {
-    address: fd.get('address'),
-    city: fd.get('city') || null,
-    county: fd.get('county') || null,
-    owner_names: splitCSV(fd.get('owner_names')),
-    mailing_address: fd.get('mailing_address') || null,
-    lead_source: fd.get('lead_source'),
-    filing_type: fd.get('filing_type'),
-    filing_date: fd.get('filing_date') || null,
+    address:          fd.get('address'),
+    city:             fd.get('city') || null,
+    county:           fd.get('county') || null,
+    owner_names:      split(fd.get('owner_names')),
+    mailing_address:  fd.get('mailing_address') || null,
+    lead_source:      fd.get('lead_source'),
+    filing_type:      fd.get('filing_type'),
+    filing_date:      fd.get('filing_date') || null,
     estimated_equity: fd.get('estimated_equity') ? parseFloat(fd.get('estimated_equity')) : null,
-    phones: splitCSV(fd.get('phones')),
-    emails: splitCSV(fd.get('emails')),
+    phones:           split(fd.get('phones')),
+    emails:           split(fd.get('emails')),
     next_followup_date: fd.get('next_followup_date') || null,
-    notes: fd.get('notes') || null,
+    notes:            fd.get('notes') || null,
   };
 
   try {
@@ -391,178 +460,21 @@ async function submitNewLead(e) {
     if (res.status === 409) {
       msg.className = 'alert alert-warning';
       msg.style.display = 'block';
-      msg.innerHTML = `⚠️ Duplicate detected: <strong>${data.detail.message}</strong>
-        <a href="#" onclick="openLead(${data.detail.existing_lead_id})">View existing lead #${data.detail.existing_lead_id}</a>`;
+      msg.innerHTML = `⚠️ Duplicate: ${data.detail.message} <a href="/lead/${data.detail.existing_lead_id}">View lead #${data.detail.existing_lead_id}</a>`;
       return;
     }
     if (!res.ok) throw new Error(JSON.stringify(data));
     msg.className = 'alert alert-success';
     msg.style.display = 'block';
-    msg.innerHTML = `✅ Lead saved — <a href="#" onclick="openLead(${data.id})">View lead #${data.id}</a>`;
+    msg.innerHTML = `✅ Saved — <a href="/lead/${data.id}">View lead #${data.id}</a>`;
     form.reset();
-    showTab('pipeline');
     loadLeads();
+    loadStats();
   } catch(ex) {
     msg.className = 'alert alert-danger';
     msg.style.display = 'block';
     msg.textContent = 'Error: ' + ex.message;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Lead detail modal
-// ---------------------------------------------------------------------------
-async function openLead(id) {
-  const modal = document.getElementById('lead-modal');
-  const body = document.getElementById('modal-body');
-  document.getElementById('modal-title').textContent = `Lead #${id}`;
-  body.innerHTML = '<p style="padding:20px;color:#999;">Loading…</p>';
-  modal.style.display = 'block';
-
-  const [leadRes, outreachRes] = await Promise.all([
-    fetch(`/api/leads/${id}`),
-    fetch(`/api/leads/${id}/outreach`),
-  ]);
-  const lead = await leadRes.json();
-  const logs = await outreachRes.json();
-
-  const dncWarning = lead.do_not_contact
-    ? `<div class="dnc-banner">⛔ DO NOT CONTACT — ${lead.do_not_contact_reason || 'flagged manually'}</div>`
-    : '';
-
-  const rows = (obj) => Object.entries(obj)
-    .filter(([,v]) => v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0))
-    .map(([k,v]) => `<tr><td style="font-weight:600;color:#555;width:160px;">${k.replace(/_/g,' ')}</td><td>${Array.isArray(v) ? v.join(', ') : v}</td></tr>`)
-    .join('');
-
-  const infoFields = {
-    address: lead.address, city: lead.city, county: lead.county,
-    owner_names: lead.owner_names, mailing_address: lead.mailing_address,
-    lead_source: lead.lead_source, filing_type: lead.filing_type,
-    filing_date: lead.filing_date ? new Date(lead.filing_date).toLocaleDateString() : null,
-    estimated_equity: lead.estimated_equity ? '$' + lead.estimated_equity.toLocaleString() : null,
-    phones: lead.phones, emails: lead.emails,
-    skip_trace_status: lead.skip_trace_status,
-    score: lead.score,
-    created_at: new Date(lead.created_at).toLocaleString(),
-  };
-
-  const thread = logs.length === 0
-    ? '<p style="color:#999;font-size:13px;">No outreach logged yet.</p>'
-    : `<div class="thread">${logs.map(l => `
-        <div class="thread-msg ${l.direction}">
-          ${l.content || '(no content)'}
-          <div class="meta">${l.channel} · ${l.direction} · ${new Date(l.created_at).toLocaleString()} · status: ${l.status}${l.ai_drafted ? ' · AI-drafted' : ''}${l.opt_out_detected ? ' · <strong style="color:#721c24;">OPT-OUT DETECTED</strong>' : ''}</div>
-        </div>`).join('')}</div>`;
-
-  body.innerHTML = `
-    ${dncWarning}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-      <div>
-        <div class="card">
-          <h3>Lead Info</h3>
-          <table style="box-shadow:none;border-radius:0;">
-            <tbody>${rows(infoFields)}</tbody>
-          </table>
-        </div>
-        <div class="card">
-          <h3>Stage &amp; Follow-up</h3>
-          <div class="form-row">
-            <label>Pipeline Stage</label>
-            <select id="modal-stage" onchange="updateStage(${lead.id}, this.value)">
-              ${['new','skip_traced','contacted','responded','negotiating','under_contract','assigned','closed','dead']
-                .map(s => `<option ${s === lead.pipeline_stage ? 'selected' : ''} value="${s}">${s.replace(/_/g,' ')}</option>`)
-                .join('')}
-            </select>
-          </div>
-          <div class="form-row">
-            <label>Next Follow-up</label>
-            <input type="date" id="modal-followup" value="${lead.next_followup_date ? lead.next_followup_date.slice(0,10) : ''}"
-              onchange="updateFollowup(${lead.id}, this.value)">
-          </div>
-          <div class="form-row">
-            <label>Notes</label>
-            <textarea id="modal-notes" rows="4">${lead.notes || ''}</textarea>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="saveNotes(${lead.id})">Save Notes</button>
-          &nbsp;<label style="font-size:12px;">
-            <input type="checkbox" id="modal-dnc" ${lead.do_not_contact ? 'checked' : ''} onchange="toggleDnc(${lead.id}, this.checked)">
-            Do Not Contact
-          </label>
-        </div>
-      </div>
-      <div>
-        <div class="card">
-          <h3>Outreach History</h3>
-          ${thread}
-          <div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px;">
-            <strong style="font-size:13px;">Log Inbound Reply</strong>
-            <div class="form-row" style="margin-top:8px;">
-              <label>Channel</label>
-              <select id="inbound-channel"><option value="sms">SMS</option><option value="email">Email</option><option value="call">Call</option></select>
-            </div>
-            <div class="form-row">
-              <label>Content</label>
-              <textarea id="inbound-content" rows="3" placeholder="What did they say?"></textarea>
-            </div>
-            <button class="btn btn-sm btn-primary" onclick="logInbound(${lead.id})">Log Reply</button>
-          </div>
-        </div>
-        <div class="card" id="ai-panel-card">
-          <h3>AI Drafting <small style="font-weight:400;color:#888;">(Step 6)</small></h3>
-          <p style="color:#999;font-size:13px;">AI drafting via Claude API will be wired in Step 6.</p>
-        </div>
-      </div>
-    </div>`;
-}
-
-async function updateStage(id, stage) {
-  await fetch(`/api/leads/${id}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pipeline_stage: stage }),
-  });
-  loadLeads();
-}
-
-async function updateFollowup(id, date) {
-  await fetch(`/api/leads/${id}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ next_followup_date: date || null }),
-  });
-}
-
-async function saveNotes(id) {
-  const notes = document.getElementById('modal-notes').value;
-  await fetch(`/api/leads/${id}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ notes }),
-  });
-  const btn = event.target;
-  btn.textContent = 'Saved ✓';
-  setTimeout(() => { btn.textContent = 'Save Notes'; }, 1500);
-}
-
-async function toggleDnc(id, checked) {
-  await fetch(`/api/leads/${id}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ do_not_contact: checked, do_not_contact_reason: checked ? 'Flagged manually' : null }),
-  });
-  openLead(id); // refresh modal
-}
-
-async function logInbound(leadId) {
-  const channel = document.getElementById('inbound-channel').value;
-  const content = document.getElementById('inbound-content').value;
-  await fetch(`/api/leads/${leadId}/outreach`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel, direction: 'inbound', content, status: 'sent', sent_at: new Date().toISOString() }),
-  });
-  openLead(leadId); // refresh
-}
-
-function closeModal() {
-  document.getElementById('lead-modal').style.display = 'none';
-  loadLeads();
 }
 
 // ---------------------------------------------------------------------------
@@ -573,24 +485,27 @@ async function loadPending() {
   container.innerHTML = '<p style="color:#999;">Loading…</p>';
   const res = await fetch('/api/outreach/pending');
   const items = await res.json();
+
+  const btn = document.getElementById('pending-tab-btn');
+  btn.textContent = items.length > 0 ? `Pending Approvals (${items.length})` : 'Pending Approvals';
+
   if (items.length === 0) {
     container.innerHTML = '<p style="color:#999;">No pending approvals.</p>';
     return;
   }
   container.innerHTML = items.map(item => `
     <div class="pending-item">
-      <div style="font-size:12px;color:#888;margin-bottom:6px;">
-        Lead #${item.lead_id} · ${item.channel} · ${item.ai_drafted ? 'AI-drafted' : 'manual'} · ${new Date(item.created_at).toLocaleString()}
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">
+        <a href="/lead/${item.lead_id}">Lead #${item.lead_id}</a> ·
+        ${item.channel} · ${item.ai_drafted ? '🤖 AI-drafted' : 'manual'} · ${new Date(item.created_at).toLocaleString()}
       </div>
-      <textarea id="pending-content-${item.id}" rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">${item.content || ''}</textarea>
+      <textarea id="pending-content-${item.id}" rows="4"
+        style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">${item.content || ''}</textarea>
       <div class="actions">
-        <button class="btn btn-primary btn-sm" onclick="approveItem(${item.id})">Approve &amp; Send</button>
+        <button class="btn btn-primary btn-sm" onclick="approveItem(${item.id})">Approve</button>
         <button class="btn btn-sm" onclick="discardItem(${item.id})">Discard</button>
       </div>
     </div>`).join('');
-
-  const btn = document.getElementById('pending-tab-btn');
-  btn.textContent = `Pending Approvals (${items.length})`;
 }
 
 async function approveItem(id) {
@@ -611,48 +526,26 @@ async function discardItem(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Close modal on backdrop click
-// ---------------------------------------------------------------------------
-document.getElementById('lead-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeModal();
-});
-
-// ---------------------------------------------------------------------------
 // CSV Import Wizard
 // ---------------------------------------------------------------------------
-
-let importSession = null;  // {session_id, headers, sample_rows, field_descriptions}
+let importSession = null;
 
 async function uploadCSV() {
   const file = document.getElementById('import-file').files[0];
   const source = document.getElementById('import-source').value;
   const msgEl = document.getElementById('import-upload-msg');
-
-  if (!file) {
-    msgEl.className = 'alert alert-warning';
-    msgEl.style.display = 'block';
-    msgEl.textContent = 'Please select a CSV file first.';
-    return;
-  }
-
+  if (!file) { msgEl.className='alert alert-warning'; msgEl.style.display='block'; msgEl.textContent='Select a CSV file first.'; return; }
   msgEl.style.display = 'none';
-
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('source', source);
-
+  const fd = new FormData(); fd.append('file', file); fd.append('source', source);
   try {
     const res = await fetch('/api/import/upload', { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-
-    importSession = data;
-    importSession.source = source;
+    importSession = { ...data, source };
     renderMappingStep(data);
   } catch(e) {
-    msgEl.className = 'alert alert-danger';
-    msgEl.style.display = 'block';
-    msgEl.textContent = 'Upload failed: ' + e.message;
+    msgEl.className='alert alert-danger'; msgEl.style.display='block';
+    msgEl.textContent='Upload failed: ' + e.message;
   }
 }
 
@@ -660,196 +553,111 @@ function renderMappingStep(data) {
   document.getElementById('import-step1').style.display = 'none';
   document.getElementById('import-step2').style.display = 'block';
   document.getElementById('import-step3').style.display = 'none';
-
   document.getElementById('import-file-info').textContent =
     `${data.filename} — ${data.row_count.toLocaleString()} rows, ${data.headers.length} columns`;
-  document.getElementById('import-source-label').textContent =
-    document.getElementById('import-source').value + ' imports';
+  document.getElementById('import-source-label').textContent = document.getElementById('import-source').value + ' imports';
+  const notice = document.getElementById('import-mapping-saved-notice');
+  if (data.saved_mapping) { notice.style.display='block'; notice.textContent='✓ Saved mapping loaded for this source.'; }
+  else { notice.style.display='none'; }
 
-  const savedNotice = document.getElementById('import-mapping-saved-notice');
-  if (data.saved_mapping) {
-    savedNotice.style.display = 'block';
-    savedNotice.textContent = '✓ Saved mapping loaded for this source. Adjust as needed.';
-  } else {
-    savedNotice.style.display = 'none';
-  }
-
-  // Build mapping table
-  const tbody = document.getElementById('mapping-tbody');
   const mapping = data.suggested_mapping || {};
   const fields = data.field_descriptions || {};
-  const headers = data.headers;
-  const samples = data.sample_rows || [];
-
+  const tbody = document.getElementById('mapping-tbody');
   tbody.innerHTML = Object.entries(fields).map(([field, desc]) => {
-    const required = field === 'address' ? ' <span style="color:#dc3545;">*</span>' : '';
-    const selected = mapping[field] || '';
-
-    // Sample values for the selected column (will refresh on change)
-    const sampleVals = selected
-      ? samples.map(r => r[selected] || '').filter(Boolean).slice(0, 3).join(' · ')
-      : '';
-
-    const opts = [`<option value="">— skip —</option>`]
-      .concat(headers.map(h =>
-        `<option value="${h.replace(/"/g,'&quot;')}" ${h === selected ? 'selected' : ''}>${h}</option>`
-      )).join('');
-
+    const req = field === 'address' ? ' <span style="color:#dc3545;">*</span>' : '';
+    const sel = mapping[field] || '';
+    const sampleVals = sel ? (data.sample_rows||[]).map(r=>r[sel]||'').filter(Boolean).slice(0,3).join(' · ') : '';
+    const opts = ['<option value="">— skip —</option>'].concat(data.headers.map(h =>
+      `<option value="${h.replace(/"/g,'&quot;')}" ${h===sel?'selected':''}>${h}</option>`)).join('');
     return `<tr>
-      <td style="font-weight:600;font-size:13px;">${desc.split(' — ')[0]}${required}<br>
+      <td style="font-weight:600;font-size:13px;">${desc.split(' — ')[0]}${req}<br>
         <span style="font-weight:400;font-size:11px;color:#888;">${field}</span></td>
-      <td>
-        <select style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;"
-          id="map-${field}" data-field="${field}" onchange="updateSample('${field}')">
-          ${opts}
-        </select>
-      </td>
-      <td id="sample-${field}" style="font-size:12px;color:#666;max-width:300px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">
-        ${sampleVals}
-      </td>
+      <td><select style="width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;"
+        id="map-${field}" data-field="${field}" onchange="updateSample('${field}')">${opts}</select></td>
+      <td id="sample-${field}" style="font-size:12px;color:#666;max-width:260px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${sampleVals}</td>
     </tr>`;
   }).join('');
 
-  // Render sample table in the details block
   renderSampleTable(data.headers, data.sample_rows);
 }
 
 function updateSample(field) {
-  const sel = document.getElementById('map-' + field);
-  const col = sel.value;
+  const col = document.getElementById('map-' + field).value;
   const samples = importSession ? importSession.sample_rows : [];
-  const vals = col ? samples.map(r => r[col] || '').filter(Boolean).slice(0, 3).join(' · ') : '';
+  const vals = col ? samples.map(r=>r[col]||'').filter(Boolean).slice(0,3).join(' · ') : '';
   document.getElementById('sample-' + field).textContent = vals;
 }
 
 function renderSampleTable(headers, rows) {
   const container = document.getElementById('import-sample-table');
-  if (!rows || rows.length === 0) { container.innerHTML = ''; return; }
-  const cols = headers.slice(0, 12); // cap columns for readability
+  if (!rows||!rows.length) { container.innerHTML=''; return; }
+  const cols = headers.slice(0,12);
   container.innerHTML = `<table style="font-size:12px;min-width:600px;">
-    <thead><tr>${cols.map(h => `<th style="white-space:nowrap;">${h}</th>`).join('')}${headers.length > 12 ? '<th>…</th>' : ''}</tr></thead>
-    <tbody>${rows.map(r =>
-      `<tr>${cols.map(c => `<td style="max-width:180px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${r[c] || ''}</td>`).join('')}${headers.length > 12 ? '<td>…</td>' : ''}</tr>`
-    ).join('')}</tbody>
-  </table>`;
+    <thead><tr>${cols.map(h=>`<th style="white-space:nowrap;">${h}</th>`).join('')}${headers.length>12?'<th>…</th>':''}</tr></thead>
+    <tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td style="max-width:180px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${r[c]||''}</td>`).join('')}${headers.length>12?'<td>…</td>':''}</tr>`).join('')}</tbody></table>`;
 }
 
 function collectMappings() {
-  const mappings = {};
-  document.querySelectorAll('#mapping-tbody select').forEach(sel => {
-    if (sel.value) mappings[sel.dataset.field] = sel.value;
-  });
-  return mappings;
+  const m={};
+  document.querySelectorAll('#mapping-tbody select').forEach(s => { if(s.value) m[s.dataset.field]=s.value; });
+  return m;
 }
 
 async function runImport() {
   if (!importSession) return;
-  if (!collectMappings().address) {
-    alert('The "address" field is required — please map it to a CSV column.');
-    return;
-  }
-
-  const payload = {
-    session_id: importSession.session_id,
-    source: importSession.source,
-    mappings: collectMappings(),
-    save_mapping: document.getElementById('import-save-mapping').checked,
-  };
-
-  const btn = event.target;
-  btn.disabled = true;
-  btn.textContent = 'Importing…';
-
+  const m = collectMappings();
+  if (!m.address) { alert('Map the "address" field — it is required.'); return; }
+  const btn = event.target; btn.disabled=true; btn.textContent='Importing…';
   try {
     const res = await fetch('/api/import/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id:importSession.session_id, source:importSession.source, mappings:m, save_mapping:document.getElementById('import-save-mapping').checked }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+    if (!res.ok) throw new Error(data.detail||JSON.stringify(data));
     renderImportResults(data);
-  } catch(e) {
-    alert('Import failed: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Run Import';
-  }
+    loadStats();
+  } catch(e) { alert('Import failed: '+e.message); }
+  finally { btn.disabled=false; btn.textContent='Run Import'; }
 }
 
 function renderImportResults(data) {
-  document.getElementById('import-step2').style.display = 'none';
-  document.getElementById('import-step3').style.display = 'block';
-
-  const summaryEl = document.getElementById('import-results-summary');
-  const okColor = data.imported > 0 ? '#155724' : '#856404';
-  summaryEl.innerHTML = `
+  document.getElementById('import-step2').style.display='none';
+  document.getElementById('import-step3').style.display='block';
+  const ok = data.imported > 0;
+  document.getElementById('import-results-summary').innerHTML = `
     <div style="display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap;">
-      <div style="text-align:center;">
-        <div style="font-size:32px;font-weight:700;color:${okColor};">${data.imported}</div>
-        <div style="font-size:12px;color:#555;">Imported</div>
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:32px;font-weight:700;color:#856404;">${data.skipped_duplicates}</div>
-        <div style="font-size:12px;color:#555;">Duplicates skipped</div>
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:32px;font-weight:700;color:${data.errors > 0 ? '#721c24' : '#555'};">${data.errors}</div>
-        <div style="font-size:12px;color:#555;">Errors</div>
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:32px;font-weight:700;color:#555;">${data.total_rows}</div>
-        <div style="font-size:12px;color:#555;">Total rows</div>
-      </div>
+      <div style="text-align:center;"><div style="font-size:32px;font-weight:700;color:${ok?'#155724':'#856404'};">${data.imported}</div><div style="font-size:12px;color:#555;">Imported</div></div>
+      <div style="text-align:center;"><div style="font-size:32px;font-weight:700;color:#856404;">${data.skipped_duplicates}</div><div style="font-size:12px;color:#555;">Duplicates skipped</div></div>
+      <div style="text-align:center;"><div style="font-size:32px;font-weight:700;color:${data.errors>0?'#721c24':'#555'};">${data.errors}</div><div style="font-size:12px;color:#555;">Errors</div></div>
+      <div style="text-align:center;"><div style="font-size:32px;font-weight:700;color:#555;">${data.total_rows}</div><div style="font-size:12px;color:#555;">Total rows</div></div>
     </div>`;
-
-  let details = '';
-
-  if (data.duplicate_details && data.duplicate_details.length > 0) {
-    const rows = data.duplicate_details.map(d =>
-      `<tr><td>${d.row}</td><td>${d.address}</td><td>${(d.owner_names||[]).join(', ')}</td>
-       <td><a href="#" onclick="openLead(${d.existing_lead_id})">Lead #${d.existing_lead_id}</a></td></tr>`
-    ).join('');
-    details += `<details style="margin-bottom:12px;">
-      <summary style="cursor:pointer;font-weight:600;font-size:13px;">
-        ⚠️ ${data.skipped_duplicates} duplicate row(s) — click to review
-      </summary>
-      <table style="margin-top:8px;font-size:13px;">
-        <thead><tr><th>CSV row</th><th>Address</th><th>Owner(s)</th><th>Existing lead</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </details>`;
+  let det='';
+  if ((data.duplicate_details||[]).length>0) {
+    det+=`<details style="margin-bottom:12px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;">⚠️ ${data.skipped_duplicates} duplicate(s)</summary>
+      <table style="margin-top:8px;font-size:13px;"><thead><tr><th>Row</th><th>Address</th><th>Owner(s)</th><th>Existing</th></tr></thead>
+      <tbody>${data.duplicate_details.map(d=>`<tr><td>${d.row}</td><td>${d.address}</td><td>${(d.owner_names||[]).join(', ')}</td><td><a href="/lead/${d.existing_lead_id}">Lead #${d.existing_lead_id}</a></td></tr>`).join('')}</tbody></table></details>`;
   }
-
-  if (data.error_details && data.error_details.length > 0) {
-    const rows = data.error_details.map(d =>
-      `<tr><td>${d.row}</td><td>${d.error}</td></tr>`
-    ).join('');
-    details += `<details>
-      <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#721c24;">
-        ❌ ${data.errors} error(s) — click to review
-      </summary>
-      <table style="margin-top:8px;font-size:13px;">
-        <thead><tr><th>CSV row</th><th>Error</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </details>`;
+  if ((data.error_details||[]).length>0) {
+    det+=`<details><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#721c24;">❌ ${data.errors} error(s)</summary>
+      <table style="margin-top:8px;font-size:13px;"><thead><tr><th>Row</th><th>Error</th></tr></thead>
+      <tbody>${data.error_details.map(d=>`<tr><td>${d.row}</td><td>${d.error}</td></tr>`).join('')}</tbody></table></details>`;
   }
-
-  document.getElementById('import-results-details').innerHTML = details;
+  document.getElementById('import-results-details').innerHTML = det;
 }
 
 function resetImport() {
-  importSession = null;
-  document.getElementById('import-step1').style.display = 'block';
-  document.getElementById('import-step2').style.display = 'none';
-  document.getElementById('import-step3').style.display = 'none';
-  document.getElementById('import-upload-msg').style.display = 'none';
-  document.getElementById('import-file').value = '';
+  importSession=null;
+  document.getElementById('import-step1').style.display='block';
+  document.getElementById('import-step2').style.display='none';
+  document.getElementById('import-step3').style.display='none';
+  document.getElementById('import-upload-msg').style.display='none';
+  document.getElementById('import-file').value='';
 }
 
 // Initial load
 loadLeads();
+loadStats();
 </script>
 </body>
 </html>

@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Lead, PipelineStage
+from models import Lead, PipelineStage, SkipTraceStatus
 from schemas import DuplicateCheckResult, LeadCreate, LeadResponse, LeadUpdate
 from scoring import calculate_score
 
@@ -47,6 +49,62 @@ def _find_duplicate(db: Session, address: str, owner_names: list[str]) -> Option
     return db.query(Lead).filter(Lead.dedup_key == key).first()
 
 
+def _normalize_phone(val: str) -> str:
+    digits = re.sub(r"\D", "", val)
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits[0] == "1":
+        return f"+{digits}"
+    return val.strip()
+
+
+# ---------------------------------------------------------------------------
+# Stats (must be before /{lead_id} to avoid routing conflict)
+# ---------------------------------------------------------------------------
+
+@router.get("/stats")
+def get_pipeline_stats(db: Session = Depends(get_db)):
+    stage_counts = dict(
+        db.query(Lead.pipeline_stage, func.count(Lead.id))
+        .group_by(Lead.pipeline_stage)
+        .all()
+    )
+    total = db.query(func.count(Lead.id)).scalar() or 0
+    dnc = (
+        db.query(func.count(Lead.id)).filter(Lead.do_not_contact == True).scalar() or 0
+    )
+    now = datetime.now(timezone.utc)
+    overdue = (
+        db.query(func.count(Lead.id))
+        .filter(Lead.next_followup_date.is_not(None))
+        .filter(Lead.next_followup_date <= now)
+        .scalar()
+        or 0
+    )
+    return {
+        "total": total,
+        "dnc": dnc,
+        "overdue": overdue,
+        "by_stage": {s.value: stage_counts.get(s, 0) for s in PipelineStage},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Check-duplicate (POST literal path — before /{lead_id})
+# ---------------------------------------------------------------------------
+
+@router.post("/check-duplicate", response_model=DuplicateCheckResult)
+def check_duplicate(address: str, owner_names: list[str], db: Session = Depends(get_db)):
+    dup = _find_duplicate(db, address, owner_names)
+    if dup:
+        return DuplicateCheckResult(
+            is_duplicate=True,
+            existing_lead_id=dup.id,
+            message=f"Duplicate: lead #{dup.id} at '{dup.address}' already exists.",
+        )
+    return DuplicateCheckResult(is_duplicate=False, message="No duplicate found.")
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -64,7 +122,6 @@ def list_leads(
     db: Session = Depends(get_db),
 ):
     q = db.query(Lead)
-
     if stage:
         q = q.filter(Lead.pipeline_stage == stage)
     if county:
@@ -72,12 +129,10 @@ def list_leads(
     if source:
         q = q.filter(Lead.lead_source == source)
     if needs_followup:
-        now = datetime.now(timezone.utc)
-        q = q.filter(Lead.next_followup_date <= now)
+        q = q.filter(Lead.next_followup_date <= datetime.now(timezone.utc))
 
     col = getattr(Lead, sort_by)
     q = q.order_by(col.desc() if sort_dir == "desc" else col.asc())
-
     return q.offset(skip).limit(limit).all()
 
 
@@ -94,7 +149,6 @@ def create_lead(payload: LeadCreate, db: Session = Depends(get_db)):
                 "existing_owner_names": dup.owner_names,
             },
         )
-
     lead = Lead(**payload.model_dump())
     lead.dedup_key = _make_dedup_key(payload.address, payload.owner_names or [])
     lead.score = calculate_score(lead)
@@ -119,12 +173,9 @@ def update_lead(lead_id: int, payload: LeadUpdate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Lead not found")
 
     update_data = payload.model_dump(exclude_unset=True)
-
-    # If address or owner_names changed, recheck dedup key (don't block — just update key)
     addr_changed = "address" in update_data or "owner_names" in update_data
     for field, value in update_data.items():
         setattr(lead, field, value)
-
     if addr_changed:
         lead.dedup_key = _make_dedup_key(lead.address, lead.owner_names or [])
 
@@ -144,6 +195,53 @@ def delete_lead(lead_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+# ---------------------------------------------------------------------------
+# Manual skip trace entry
+# ---------------------------------------------------------------------------
+
+class SkipTraceManualInput(BaseModel):
+    phones: list[str] = []
+    emails: list[str] = []
+    match_quality: str = "medium"   # high / medium / low
+    notes: Optional[str] = None
+
+
+@router.post("/{lead_id}/skip-trace-manual", response_model=LeadResponse)
+def manual_skip_trace(lead_id: int, payload: SkipTraceManualInput, db: Session = Depends(get_db)):
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Merge — union with existing, no duplicates
+    existing_phones = set(lead.phones or [])
+    existing_emails = set(lead.emails or [])
+
+    new_phones = [_normalize_phone(p) for p in payload.phones if p.strip()]
+    new_emails = [e.lower().strip() for e in payload.emails if e.strip()]
+
+    merged_phones = list(existing_phones | set(new_phones))
+    merged_emails = list(existing_emails | set(new_emails))
+
+    lead.phones = merged_phones or lead.phones
+    lead.emails = merged_emails or lead.emails
+    lead.skip_trace_status = SkipTraceStatus.complete
+
+    # Advance stage: new → skip_traced
+    if lead.pipeline_stage == PipelineStage.new:
+        lead.pipeline_stage = PipelineStage.skip_traced
+
+    if payload.notes:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        note_line = f"[Skip trace {stamp} ({payload.match_quality} match): {payload.notes}]"
+        lead.notes = f"{lead.notes}\n{note_line}".strip() if lead.notes else note_line
+
+    lead.updated_at = datetime.now(timezone.utc)
+    lead.score = calculate_score(lead)
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
 @router.post("/{lead_id}/recalculate-score", response_model=LeadResponse)
 def recalculate_score(lead_id: int, db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
@@ -154,15 +252,3 @@ def recalculate_score(lead_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(lead)
     return lead
-
-
-@router.post("/check-duplicate", response_model=DuplicateCheckResult)
-def check_duplicate(address: str, owner_names: list[str], db: Session = Depends(get_db)):
-    dup = _find_duplicate(db, address, owner_names)
-    if dup:
-        return DuplicateCheckResult(
-            is_duplicate=True,
-            existing_lead_id=dup.id,
-            message=f"Duplicate: lead #{dup.id} at '{dup.address}' already exists.",
-        )
-    return DuplicateCheckResult(is_duplicate=False, message="No duplicate found.")
